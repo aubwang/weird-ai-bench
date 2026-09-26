@@ -9,7 +9,7 @@ from songbench.cli import main
 from songbench.judge import rubric
 from songbench.llm import ScriptedClient
 from songbench.orchestrate import ConfigError, Song, RunConfig, render_sheet
-from songbench.spec import bundled_specs, load_spec, spec_from_dict
+from songbench.spec import bundled_specs, load_spec, slack_hints, spec_from_dict
 
 
 def responses():
@@ -112,3 +112,19 @@ def test_invalid_templates_fail_before_generation(mutation):
         raw["sections"]["opening"]["lines"] = []
     with pytest.raises(ValueError):
         spec_from_dict(raw)
+
+
+def test_slack_hints_and_validation(tmp_path):
+    spec = load_spec("two_voices")
+    assert slack_hints(spec) == []
+    assert slack_hints(spec, min_lines=1) == [
+        "Opening and Ending differ by up to 1 syllable on line 1. If they share a melody, "
+        "consider `slack` there."]
+    spec.sections["ending"].lines[0].slack = 1
+    assert slack_hints(spec, min_lines=1) == []
+    raw = asdict(load_spec("two_voices"))
+    raw["sections"]["opening"]["lines"][0]["slack"] = -1
+    path = tmp_path / "bad.yaml"
+    path.write_text(yaml.safe_dump(raw))
+    with pytest.raises(ValueError, match="slack"):
+        load_spec(str(path))

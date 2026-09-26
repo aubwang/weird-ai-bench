@@ -18,7 +18,7 @@ from .orchestrate import (
 )
 from .prompts import chorus_task, render_song_so_far, section_task, trade_line_task
 from .scenario import bundled_scenarios, load_scenario
-from .spec import bundled_specs, describe_section, load_spec
+from .spec import bundled_specs, describe_section, load_spec, slack_hints
 from .verify import GATES, verify_section
 
 
@@ -231,7 +231,8 @@ def cmd_check(args) -> int:
         rep = verify_section(lines, sec, spec.syllable_overrides, args.tolerance, hook=hook)
         print(f"== {sec.label} ==")
         for l in rep.lines:
-            marks = [f"{l.count}/{l.target} syl" + ("" if l.syllables_ok else " ✗")]
+            marks = [f"{l.count}/{l.target}{f'±{l.slack}' if l.slack else ''} syl"
+                     + ("" if l.syllables_ok else " ✗")]
             if l.stress_required and not l.syllables_ok:
                 marks.append("stress n/a")
             elif l.stress_required:
@@ -313,6 +314,8 @@ def cmd_spec(args) -> int:
     print(f'"{spec.title}" ({spec.artist})\n')
     for key in spec.generation_order:
         print(f"[{key}] " + describe_section(spec.sections[key]) + "\n")
+    for hint in slack_hints(spec):
+        print(f"hint: {hint}")
     return 0
 
 
