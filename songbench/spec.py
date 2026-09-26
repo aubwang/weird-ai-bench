@@ -22,6 +22,7 @@ class LineSpec:
     note: str | None = None
     reference: str | None = None
     adlibs: list[str] = field(default_factory=list)
+    slack: int = 0  # syllables either side of the target that still fit the melody
 
 
 @dataclass
@@ -93,6 +94,9 @@ def _line(d: dict) -> LineSpec:
     if d.get("reference") is not None and not isinstance(d["reference"], str):
         raise ValueError("line reference must be text")
     _validate_adlibs(d.get("adlibs", []))
+    slack = d.get("slack", 0)
+    if not isinstance(slack, int) or isinstance(slack, bool) or slack < 0:
+        raise ValueError("line slack must be a whole number, 0 or more")
     return LineSpec(**d)
 
 
@@ -263,7 +267,8 @@ def format_lyric(text: str, adlibs: list[str]) -> str:
 
 def describe_line(ln: LineSpec, idx: int, rhymes: dict[str, RhymeSpec]) -> str:
     """One-line human description of a line's constraints, used in prompts."""
-    parts = [f"{ln.syllables} syllables"]
+    parts = [f"{ln.syllables} syllables" + (
+        f" ({max(ln.syllables - ln.slack, 1)} to {ln.syllables + ln.slack} fits)" if ln.slack else "")]
     if ln.split:
         parts.append(f"phrased {ln.split[0]} + {ln.split[1]} with a pause (comma or dash) after syllable {ln.split[0]}")
     if ln.stress:
@@ -303,6 +308,32 @@ def describe_section(sec: SectionSpec) -> str:
         if len(idxs) > 1:
             out.append(f"  Rhyme {g}: lines {', '.join(map(str, idxs))} rhyme with each other ({kind}).")
     return "\n".join(out)
+
+
+def slack_hints(spec: SongSpec, min_lines: int = 3) -> list[str]:
+    """Where same-length sections disagree on syllable counts but have no slack.
+
+    If those sections are sung to one melody, the melody stretches there, so the
+    lines may deserve slack. Only a hint: the template doesn't record which
+    sections share a melody.
+    """
+    secs = [s for s in spec.sections.values()
+            if not s.is_chorus and not s.is_trade and len(s.lines) >= min_lines]
+    hints = []
+    for i, a in enumerate(secs):
+        for b in secs[i + 1:]:
+            if len(a.lines) != len(b.lines):
+                continue
+            diffs = {n: abs(x.syllables - y.syllables)
+                     for n, (x, y) in enumerate(zip(a.lines, b.lines), 1)
+                     if x.syllables != y.syllables and not (x.slack or y.slack)}
+            if diffs:
+                hints.append(
+                    f"{a.label} and {b.label} differ by up to {max(diffs.values())} "
+                    f"syllable{'s' if max(diffs.values()) > 1 else ''} on "
+                    f"line{'s' if len(diffs) > 1 else ''} {', '.join(map(str, diffs))}. If they "
+                    f"share a melody, consider `slack` there.")
+    return hints
 
 
 def syllable_map(spec: SongSpec) -> str:

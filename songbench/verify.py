@@ -37,6 +37,7 @@ class LineReport:
     count_min: int | None = None
     count_max: int | None = None
     syllables_ok: bool = False
+    slack: int = 0  # allowed miss either side of the target
     stress_required: int = 0
     stress_hits: int = 0
     stress_issues: list[str] = field(default_factory=list)
@@ -99,7 +100,8 @@ def analyze_line(text: str, spec: LineSpec, overrides: dict | None = None,
 
     (pos, hit), (viol, path) = min(states.items(), key=rank)
     rep.count = pos
-    rep.syllables_ok = abs(pos - spec.syllables) <= tolerance
+    rep.slack = max(tolerance, spec.slack)
+    rep.syllables_ok = abs(pos - spec.syllables) <= rep.slack
     if split_at is not None:
         rep.split_ok = hit and rep.syllables_ok
     rep.stress_required = len(required)
@@ -317,7 +319,8 @@ class SectionReport:
         for l in self.lines:
             n = f"Line {l.index}"
             if "syllables" in gates and not l.syllables_ok:
-                out.append(f"{n} (\"{l.text}\") has {l.count} syllables; it needs {l.target}.")
+                need = f"{max(l.target - l.slack, 1)} to {l.target + l.slack}" if l.slack else str(l.target)
+                out.append(f"{n} (\"{l.text}\") has {l.count} syllables; it needs {need}.")
             if "stress" in gates and l.syllables_ok and not l.stress_ok:
                 out.append(f"{n} (\"{l.text}\"): " + "; ".join(l.stress_issues) + ".")
             if "split" in gates and l.split_ok is False and l.syllables_ok:

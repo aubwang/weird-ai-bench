@@ -1,7 +1,7 @@
 """Verifier tests on synthetic, independently specified lines."""
 
 from songbench.phonetics import tokenize, word_info
-from songbench.spec import LineSpec, RhymeSpec, SectionSpec
+from songbench.spec import LineSpec, RhymeSpec, SectionSpec, describe_line
 from songbench.verify import analyze_line, internal_rhyme, rhyme_level, verify_section
 
 
@@ -110,3 +110,14 @@ def test_wrong_count_is_charged_once():
     rep = verify_section(["The sky is bright", "The sky is very bright"], sec)
     s = rep.scores()
     assert s["syllables"] == 0.5 and s["stress"] == 1 and "split" not in s
+
+
+def test_slack_widens_the_count_and_shows_in_prompts_and_errors():
+    loose = LineSpec(7, slack=2)
+    assert analyze_line("We walk back home tonight, my friend", loose).syllables_ok  # 8
+    assert not analyze_line("We walk back home tonight together, my friend", loose).syllables_ok  # 11
+    assert analyze_line("We walk back home tonight, my friend", LineSpec(7, slack=2), tolerance=0).slack == 2
+    assert analyze_line("We walk", LineSpec(7), tolerance=1).slack == 1
+    sec = SectionSpec("line", "Line", [loose], {}, singer=1)
+    assert "it needs 5 to 9." in verify_section(["We walk back home tonight together, my friend"], sec).errors()[0]
+    assert "7 syllables (5 to 9 fits)" in describe_line(loose, 1, {})

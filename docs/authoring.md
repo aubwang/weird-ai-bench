@@ -44,6 +44,7 @@ originality report. Leave `reference` out if no reference should be supplied.
 | Field | Meaning |
 |---|---|
 | `syllables: 8` | Required main-line syllable count |
+| `slack: 2` | Syllables either side of the target that still fit, for looser stretches of melody; prompts show the range |
 | `stress: [2, 4]` | Required strong beats, counted from 1 |
 | `split: [4, 4]` | Pause at the syllable boundary between the two halves |
 | `rhyme: A` | End word belongs to group A within this section |
@@ -73,7 +74,9 @@ To keep scoring rhyme but stop using it as a retry condition, run with:
 
 Changing the YAML changes the task requirements. Changing `--gates` changes
 which failures cause retries. `--track freeform` never retries. `--tolerance 1`
-allows a one-syllable count deviation. Record these choices when comparing
+allows a one-syllable count deviation on every line; a line's `slack` applies
+instead where it's larger. `songbench spec` suggests `slack` where sections of
+the same length disagree on counts, since a melody that fits both is looser there. Record these choices when comparing
 benchmark results; automatic grouping does not cover every generation setting.
 
 ## Prewritten sections
