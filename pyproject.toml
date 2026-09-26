@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "songbench"
+version = "0.1.0"
+description = "Two LLMs co-write a parody duet to a fixed song template; checks meter, stress, and rhyme, and judges the result."
+requires-python = ">=3.10"
+dependencies = ["pronouncing>=0.2", "pyyaml>=6", "httpx>=0.25"]
+
+[project.optional-dependencies]
+test = ["pytest>=7"]
+
+[project.scripts]
+songbench = "songbench.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["songbench*"]
+
+[tool.setuptools.package-data]
+"songbench.data.specs" = ["*.yaml"]
+"songbench.data.presets" = ["*.yaml"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+norecursedirs = ["local", ".git", ".venv"]

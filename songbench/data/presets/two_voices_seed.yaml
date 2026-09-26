@@ -1,0 +1,5 @@
+song: two_voices
+sections:
+  opening:
+    - text: The sky is bright
+      adlibs: [oh]
