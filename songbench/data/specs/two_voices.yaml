@@ -1,0 +1,43 @@
+# Synthetic example, not a transcription of a recorded song.
+# Source lyrics and pacing constraints share the same line entries.
+id: two_voices
+title: Two Voices (example)
+artist: songbench
+generation_order: [refrain, opening, exchange, ending]
+performance_order: [opening, refrain, exchange, refrain, ending]
+sections:
+  refrain:
+    label: Refrain
+    sung_by: both
+    note: A short shared answer; the second line is the hook.
+    lines:
+      - syllables: 4
+        reference: We watch the light
+        stress: [2, 4]
+      - syllables: 4
+        reference: We walk back home
+        hook: true
+  opening:
+    label: Opening
+    singer: 1
+    lines:
+      - syllables: 4
+        reference: The sky is bright
+        stress: [2, 4]
+  exchange:
+    label: Call and response
+    trade: [1, 2]
+    lines:
+      - syllables: 4
+        reference: You take the road
+        note: A direct invitation to the other singer.
+      - syllables: 4
+        reference: I take the train
+        note: Answer the invitation.
+  ending:
+    label: Ending
+    singer: 2
+    lines:
+      - syllables: 5
+        reference: Now we walk back home
+        repeats_hook: true
