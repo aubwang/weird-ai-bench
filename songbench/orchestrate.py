@@ -98,12 +98,13 @@ class RunConfig:
 
 def line_score(l: LineReport) -> float:
     checks = [1.0 if l.syllables_ok else 0.0]
-    if l.stress_required:
+    # Stress and splits need the right count; a wrong count is only charged once.
+    if l.stress_required and l.syllables_ok:
         checks.append(l.stress_hits / l.stress_required)
     rhyme = rhyme_credit(l)
     if rhyme is not None:
         checks.append(rhyme)
-    for v in (l.split_ok, l.internal_ok, l.hook_ok):
+    for v in (l.split_ok if l.syllables_ok else None, l.internal_ok, l.hook_ok):
         if v is not None:
             checks.append(1.0 if v else 0.0)
     return sum(checks) / len(checks)
