@@ -8,6 +8,7 @@ songs/local/
 presets/local/
 scenarios/local/
 tests/local/
+docs/local/
 lyrics_*.txt
 dist/
 build/
