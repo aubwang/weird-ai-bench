@@ -80,6 +80,11 @@ def test_parse_annotations_and_keep_adlibs():
     assert parse_lyrics(text) == ["The sky is bright", "We head home", "We walk home <adlib>home</adlib>"]
 
 
+def test_parse_with_one_tag_missing():
+    assert parse_lyrics("The sky is bright\nWe head home\n</lyrics>") == ["The sky is bright", "We head home"]
+    assert parse_lyrics("Here you go:\n<lyrics>\nThe sky is bright") == ["The sky is bright"]
+
+
 def test_blind_judging_and_stats():
     r = Song(RunConfig(["a/one", "b/two"]), ScriptedClient(script())).run()
     assert "a/one" not in render_sheet(r, blind=True)

@@ -42,6 +42,11 @@ Tests use `ScriptedClient`, so they don't need the network.
 - **Tracks share prompts.** `strict` retries failed checks and `freeform` is
   one shot but still scored, so any difference between them comes from the
   feedback loop.
+- **Guidance is its own setting, not a track.** `--guidance none` drops the
+  song map from the prompts but keeps the reference lyrics and line counts, so
+  it measures whether a model hears the meter instead of following it. It's
+  freeform only, since retry feedback would leak the map, and the leaderboard
+  never groups guided and unguided songs together.
 - **Presets are context, not model output.** They're verified but never
   credited to a model or retried.
 - **Judging is blind.** The judge sees "Singer 1", "Singer 2", and so on, and

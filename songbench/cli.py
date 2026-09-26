@@ -14,7 +14,7 @@ from pathlib import Path
 
 from .llm import LLMError, OpenRouterClient
 from .orchestrate import (
-    CHORUS, NAMES, TRACKS, ConfigError, RunConfig, Song, render_sheet, save,
+    CHORUS, GUIDANCE, NAMES, TRACKS, ConfigError, RunConfig, Song, render_sheet, save,
 )
 from .prompts import chorus_task, render_song_so_far, section_task, trade_line_task
 from .scenario import bundled_scenarios, load_scenario
@@ -37,6 +37,7 @@ def _config(args, models=None, scenario=None, track=None) -> RunConfig:
         scenario=scenario or args.scenario, names=args.names,
         personas=list(getattr(args, "persona", None) or []),
         chorus=args.chorus, presets=args.preset, track=track or args.track,
+        guidance=args.guidance,
         max_retries=args.retries, tolerance=args.tolerance,
         gates=[g.strip() for g in args.gates.split(",") if g.strip()],
         spec=args.spec,
@@ -50,6 +51,9 @@ def _common(p: argparse.ArgumentParser, single: bool = True) -> None:
                        help=f"bundled scenario ({', '.join(bundled_scenarios())}) or a YAML path")
         p.add_argument("--track", choices=TRACKS, default="strict")
     p.add_argument("--names", choices=NAMES, default="real")
+    p.add_argument("--guidance", choices=GUIDANCE, default="full",
+                   help="none: prompts give only the reference lyrics and line counts, no song "
+                        "map; needs --track freeform (matrix: --tracks freeform)")
     p.add_argument("--chorus", default="auto",
                    help=f"{', '.join(CHORUS)}, or the singer number that writes it. auto: a preset "
                         "chorus if supplied, otherwise the chorus's first singer; original: the "
@@ -85,7 +89,7 @@ def cmd_run(args) -> int:
         if first is not None:
             sec = spec.sections[first]
             so_far = render_song_so_far(spec, cfg, song.written, song.authors)
-            task = (chorus_task(spec, sec, so_far) if sec.is_chorus else
+            task = (chorus_task(spec, cfg, sec, so_far) if sec.is_chorus else
                     trade_line_task(spec, cfg, sec, 0, so_far) if sec.is_trade else
                     section_task(spec, cfg, sec, so_far))
             print(f"===== first task =====\n{task}")
@@ -187,7 +191,7 @@ def cmd_matrix(args) -> int:
             per = lambda k: ";".join("" if x[k] is None else f"{x[k]:.3f}" for x in b)
             row = {"id": r["id"], "spec": r["spec"], "models": ";".join(c.models),
                    "scenario": r["scenario_snapshot"]["id"], "names": c.names,
-                   "chorus": r["config"]["chorus"], "track": c.track,
+                   "chorus": r["config"]["chorus"], "track": c.track, "guidance": c.guidance,
                    "adherence": per("adherence"), "first_try": per("first_try_pass_rate"),
                    "strict_pass": r["scores"]["strict_pass"], "cost": r["usage"]["cost"],
                    "judge_overall": r.get("judge", {}).get("scores", {}).get("overall")}
@@ -270,9 +274,9 @@ def cmd_stats(args) -> int:
         _log("no runs found")
         return 1
     f = lambda v: "–" if v is None else f"{v:.0%}" if isinstance(v, float) and v <= 1 else f"{v:.2f}" if isinstance(v, float) else str(v)
-    print(f"{'model':<40} {'track':<9} {'songs':>5} {'adher.':>7} {'1st-try':>8} {'final':>6} {'retries':>8} {'judge':>6}")
+    print(f"{'model':<40} {'track':<9} {'guidance':<8} {'songs':>5} {'adher.':>7} {'1st-try':>8} {'final':>6} {'retries':>8} {'judge':>6}")
     for r in rows:
-        print(f"{r['model']:<40} {r['track']:<9} {r['songs']:>5} {f(r['adherence']):>7} "
+        print(f"{r['model']:<40} {r['track']:<9} {r['guidance']:<8} {r['songs']:>5} {f(r['adherence']):>7} "
               f"{f(r['first_try_pass']):>8} {f(r['final_pass']):>6} "
               f"{'–' if r['retries_per_song'] is None else format(r['retries_per_song'], '.1f'):>8} "
               f"{'–' if r['judge_overall'] is None else format(r['judge_overall'], '.1f'):>6}")

@@ -41,18 +41,20 @@ def group_key(run: dict) -> tuple:
     # Compare the actual supplied chorus, not its path or preset name.
     supplied = tuple((k, tuple(p["lines"])) for k, p in sorted(run["parts"].items())
                      if p.get("author") in ("fixed", "original"))
-    return (template, scenario, c["names"], c["chorus"], c["track"], reference, supplied)
+    return (template, scenario, c["names"], c["chorus"], c["track"], c.get("guidance", "full"),
+            reference, supplied)
 
 
 def gate_stats(runs: list[dict]) -> list[dict]:
-    """Per model and track: adherence, first-try pass, retries (no judge needed)."""
+    """Per model, track, and guidance: adherence, first-try pass, retries (no judge needed)."""
     acc: dict[tuple, dict] = defaultdict(lambda: {"adherence": [], "turns": 0, "first": 0,
                                                     "final": 0, "retries": 0, "songs": 0,
                                                     "cost": 0.0, "judge": []})
     for r in runs:
         track = r["config"]["track"]
+        guidance = r["config"].get("guidance", "full")
         for s, b in r["scores"]["by_singer"].items():
-            a = acc[(b["model"], track)]
+            a = acc[(b["model"], track, guidance)]
             a["songs"] += 1
             if b["adherence"] is not None:
                 a["adherence"].append(b["adherence"])
@@ -64,9 +66,9 @@ def gate_stats(runs: list[dict]) -> list[dict]:
             if "judge" in r and r["judge"]["scores"].get("overall") is not None:
                 a["judge"].append(r["judge"]["scores"]["overall"])
     rows = []
-    for (model, track), a in sorted(acc.items()):
+    for (model, track, guidance), a in sorted(acc.items()):
         rows.append({
-            "model": model, "track": track, "songs": a["songs"],
+            "model": model, "track": track, "guidance": guidance, "songs": a["songs"],
             "adherence": _mean(a["adherence"]),
             "first_try_pass": a["first"] / a["turns"] if a["turns"] else None,
             "final_pass": a["final"] / a["turns"] if a["turns"] else None,
