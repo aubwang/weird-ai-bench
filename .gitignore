@@ -6,7 +6,22 @@ runs/
 songs/local/
 
 presets/local/
+scenarios/local/
 tests/local/
 lyrics_*.txt
 dist/
 build/
+
+# Sandbox placeholders mounted into the working tree
+.bash_profile
+.bashrc
+.profile
+.zprofile
+.zshrc
+.gitconfig
+.gitmodules
+.ripgreprc
+.mcp.json
+.idea
+.vscode
+.claude/

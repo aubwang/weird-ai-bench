@@ -1,0 +1,7 @@
+# The singers address one another, so each needs a name to answer.
+id: each_other
+text: >-
+  We're writing a parody of "{title}" by {artist}. Every singer is an AI model.
+  The singers are singing to each other.
+min_singers: 2
+requires_names: true

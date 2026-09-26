@@ -25,7 +25,7 @@ def load_runs(paths: list[str]) -> list[dict]:
             d = json.loads(f.read_text())
         except (json.JSONDecodeError, OSError):
             continue
-        if isinstance(d, dict) and d.get("version") == 1 and "parts" in d:
+        if isinstance(d, dict) and d.get("version") == 2 and "parts" in d:
             d["_path"] = str(f)
             runs.append(d)
     return runs
@@ -34,11 +34,14 @@ def load_runs(paths: list[str]) -> list[dict]:
 def group_key(run: dict) -> tuple:
     c = run["config"]
     template = json.dumps(asdict(result_spec(run)), sort_keys=True)
+    # Compare what the singers were told, not the scenario's id or path.
+    sc = run["scenario_snapshot"]
+    scenario = json.dumps({"text": sc["text"], "per_singer": sc["per_singer"]}, sort_keys=True)
     reference = (run.get("reference_lyrics") or {}).get("sha256")
     # Compare the actual supplied chorus, not its path or preset name.
     supplied = tuple((k, tuple(p["lines"])) for k, p in sorted(run["parts"].items())
                      if p.get("author") in ("fixed", "original"))
-    return (template, c["mode"], c["names"], c["chorus"], c["track"], reference, supplied)
+    return (template, scenario, c["names"], c["chorus"], c["track"], reference, supplied)
 
 
 def gate_stats(runs: list[dict]) -> list[dict]:
@@ -48,8 +51,7 @@ def gate_stats(runs: list[dict]) -> list[dict]:
                                                     "cost": 0.0, "judge": []})
     for r in runs:
         track = r["config"]["track"]
-        for s in ("1", "2"):
-            b = r["scores"]["by_singer"][s]
+        for s, b in r["scores"]["by_singer"].items():
             a = acc[(b["model"], track)]
             a["songs"] += 1
             if b["adherence"] is not None:
@@ -80,7 +82,7 @@ def _mean(xs):
 
 def fit_additive_bt(comparisons: list[tuple[list[str], list[str], float]],
                     l2: float = 0.01, iters: int = 3000, lr: float = 0.05) -> dict[str, float]:
-    """Bradley-Terry where a song's strength is the sum of its two models' strengths.
+    """Bradley-Terry where a song's strength is the sum of its singers' model strengths.
 
     Each comparison is (models in song A, models in song B, score for A in [0, 1]).
     """
@@ -126,8 +128,8 @@ def leaderboard(runs: list[dict], client, judge_model: str, cache_path: Path,
     pairs = []
     for g, rs in groups.items():
         for a, b in itertools.combinations(rs, 2):
-            ma = sorted([a["config"]["model_1"], a["config"]["model_2"]])
-            mb = sorted([b["config"]["model_1"], b["config"]["model_2"]])
+            ma = sorted(a["config"]["models"])
+            mb = sorted(b["config"]["models"])
             if ma != mb:  # same models on both sides carry no ranking information
                 pairs.append((a, b))
     rng = random.Random(seed)
@@ -147,8 +149,7 @@ def leaderboard(runs: list[dict], client, judge_model: str, cache_path: Path,
                 fh.write(json.dumps(rec) + "\n")
                 fh.flush()
             y = rec["score_a"] if rec["a"] == a["id"] else 1 - rec["score_a"]
-            comparisons.append(([a["config"]["model_1"], a["config"]["model_2"]],
-                                [b["config"]["model_1"], b["config"]["model_2"]], y))
+            comparisons.append((list(a["config"]["models"]), list(b["config"]["models"]), y))
             records.append(rec)
 
     strengths = fit_additive_bt(comparisons) if comparisons else {}

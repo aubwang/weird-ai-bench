@@ -38,12 +38,12 @@ class SectionSpec:
     rhymes: dict[str, RhymeSpec]
     note: str = ""
     singer: int | None = None  # verses: which singer writes it
-    sung_by: str | None = None  # "both" for the chorus
+    sung_by: list[int] | None = None  # the shared chorus: which singers sing it
     trade: list[int] | None = None  # bridge: singer for each line
 
     @property
     def is_chorus(self) -> bool:
-        return self.sung_by == "both"
+        return self.sung_by is not None
 
     @property
     def is_trade(self) -> bool:
@@ -55,6 +55,7 @@ class SongSpec:
     id: str
     title: str
     artist: str
+    singers: int
     sections: dict[str, SectionSpec]
     generation_order: list[str]
     performance_order: list[str]
@@ -73,7 +74,8 @@ class SongSpec:
             sec = self.sections[key]
             if not any(line.reference for line in sec.lines):
                 continue
-            speaker = "both" if sec.is_chorus else f"Singer {sec.singer}" if sec.singer else "trading lines"
+            speaker = (group_label(sec.sung_by, self.singers) if sec.is_chorus else
+                       f"Singer {sec.singer}" if sec.singer else "trading lines")
             body = []
             for i, line in enumerate(sec.lines):
                 if line.reference:
@@ -113,8 +115,34 @@ def load_spec(path_or_id: str | Path = "two_voices") -> SongSpec:
     return spec_from_dict(raw)
 
 
+def group_label(singers: list[int], total: int) -> str:
+    """How prompts and sheets name a group of singers: "both", "all", "Singers 1 and 3"."""
+    if len(singers) == total and total > 1:
+        return "both" if total == 2 else "all"
+    if len(singers) == 1:
+        return f"Singer {singers[0]}"
+    return "Singers " + ", ".join(map(str, singers[:-1])) + f" and {singers[-1]}"
+
+
+def _sung_by(value, key: str, total: int) -> list[int] | None:
+    if value is None:
+        return None
+    if value == "all" or (value == "both" and total == 2):
+        return list(range(1, total + 1))
+    if value == "both":
+        raise ValueError(f"{key}: sung_by: both needs a two-singer song; use all or a list of singers")
+    if not isinstance(value, list) or not value or any(not isinstance(s, int) for s in value):
+        raise ValueError(f"{key}: sung_by must be all or a list of singer numbers")
+    if len(set(value)) != len(value) or any(not 1 <= s <= total for s in value):
+        raise ValueError(f"{key}: sung_by lists each singer once, from 1 to {total}")
+    return sorted(value)
+
+
 def spec_from_dict(raw: dict) -> SongSpec:
     """Rebuild and validate a YAML spec or a saved dataclass snapshot."""
+    total = raw.get("singers")
+    if not isinstance(total, int) or isinstance(total, bool) or total < 1:
+        raise ValueError("song spec needs singers: the number of singers, 1 or more")
 
     sections: dict[str, SectionSpec] = {}
     for key, s in raw["sections"].items():
@@ -127,7 +155,7 @@ def spec_from_dict(raw: dict) -> SongSpec:
             rhymes=rhymes,
             note=(s.get("note") or "").strip(),
             singer=s.get("singer"),
-            sung_by=s.get("sung_by"),
+            sung_by=_sung_by(s.get("sung_by"), key, total),
             trade=s.get("trade"),
         )
         for i, ln in enumerate(lines, 1):
@@ -141,13 +169,14 @@ def spec_from_dict(raw: dict) -> SongSpec:
         if sec.trade and len(sec.trade) != len(lines):
             raise ValueError(f"{key}: trade list must have one singer per line")
         if not (sec.singer or sec.is_chorus or sec.is_trade):
-            raise ValueError(f"{key}: needs singer, sung_by: both, or trade")
-        if sec.singer is not None and sec.singer not in (1, 2):
-            raise ValueError(f"{key}: singer must be 1 or 2")
-        if sec.trade is not None and (len(sec.trade) != len(lines) or any(s not in (1, 2) for s in sec.trade)):
-            raise ValueError(f"{key}: trade must specify singer 1 or 2 for every line")
+            raise ValueError(f"{key}: needs singer, sung_by, or trade")
+        if sec.singer is not None and sec.singer not in range(1, total + 1):
+            raise ValueError(f"{key}: singer must be from 1 to {total}")
+        if sec.trade is not None and (len(sec.trade) != len(lines) or
+                                      any(s not in range(1, total + 1) for s in sec.trade)):
+            raise ValueError(f"{key}: trade must specify a singer from 1 to {total} for every line")
         if sum((sec.singer is not None, sec.is_chorus, sec.is_trade)) != 1:
-            raise ValueError(f"{key}: choose exactly one of singer, sung_by: both, or trade")
+            raise ValueError(f"{key}: choose exactly one of singer, sung_by, or trade")
         if not lines:
             raise ValueError(f"{key}: needs at least one line")
         sections[key] = sec
@@ -156,6 +185,7 @@ def spec_from_dict(raw: dict) -> SongSpec:
         id=raw["id"],
         title=raw["title"],
         artist=raw["artist"],
+        singers=total,
         sections=sections,
         generation_order=raw["generation_order"],
         performance_order=raw["performance_order"],
@@ -170,6 +200,12 @@ def spec_from_dict(raw: dict) -> SongSpec:
         raise ValueError("performance_order must include every section (repeats are allowed)")
     if sum(sec.is_chorus for sec in sections.values()) > 1:
         raise ValueError("only one shared chorus is supported; repeat its key in performance_order")
+    sung = set()
+    for sec in sections.values():
+        sung.update([sec.singer] if sec.singer else sec.sung_by or sec.trade)
+    missing = sorted(set(range(1, total + 1)) - sung)
+    if missing:
+        raise ValueError(f"singers {missing} never sing; every singer needs a section or line")
     return spec
 
 

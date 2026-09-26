@@ -10,7 +10,7 @@ from songbench.cli import main
 from songbench.judge import rubric
 from songbench.leaderboard import group_key
 from songbench.llm import ScriptedClient
-from songbench.orchestrate import ConfigError, Duet, RunConfig, save
+from songbench.orchestrate import ConfigError, Song, RunConfig, save
 from songbench.spec import load_preset, load_spec
 
 
@@ -29,7 +29,7 @@ RESPONSES = ["<lyrics>We watch the light\nWe walk back home</lyrics>",
 def test_prewritten_solo_and_traded_sections_are_context_not_model_output(tmp_path):
     path = preset_file(tmp_path, GIVEN)
     client = ScriptedClient(list(RESPONSES))
-    duet = Duet(RunConfig("a/one", "b/two", spec="two_voices", presets=[str(path)]), client)
+    duet = Song(RunConfig(["a/one", "b/two"], spec="two_voices", presets=[str(path)]), client)
     path.unlink()
     r = duet.run()
     assert r["scores"]["strict_pass"]
@@ -52,10 +52,10 @@ def test_multiple_presets_compose_and_cli_dry_run_matches(tmp_path, capsys):
     first = preset_file(tmp_path, {"opening": GIVEN["opening"]})
     second = preset_file(tmp_path, {"exchange": GIVEN["exchange"]}, name="other.yaml")
     client = ScriptedClient(list(RESPONSES))
-    cfg = RunConfig("a/one", "b/two", spec="two_voices", presets=[str(first), str(second)])
-    r = Duet(cfg, client).run()
+    cfg = RunConfig(["a/one", "b/two"], spec="two_voices", presets=[str(first), str(second)])
+    r = Song(cfg, client).run()
     assert len(r["turns"]) == 2
-    assert main(["run", "--model-1", "a/one", "--model-2", "b/two", "--spec", "two_voices",
+    assert main(["run", "--model", "a/one", "--model", "b/two", "--spec", "two_voices",
                  "--preset", str(first), "--preset", str(second), "--dry-run"]) == 0
     assert client.calls[0]["messages"][-1]["content"] in capsys.readouterr().out
 
@@ -72,18 +72,18 @@ def test_bad_presets_fail_before_calls(tmp_path, case):
         sections["opening"].append("Extra line")
     if case == "chorus_conflict":
         sections = {"refrain": ["We watch the light", "We walk back home"]}
-        chorus = "model_2"
+        chorus = "2"
     path = preset_file(tmp_path, sections, song=song)
     paths = [str(path)] * (2 if case == "duplicate" else 1)
     client = ScriptedClient()
     with pytest.raises(ConfigError):
-        Duet(RunConfig("a/one", "b/two", spec="two_voices", chorus=chorus, presets=paths), client)
+        Song(RunConfig(["a/one", "b/two"], spec="two_voices", chorus=chorus, presets=paths), client)
     assert client.calls == []
 
 
 def test_grouping_uses_supplied_content_not_preset_path(tmp_path):
     def run(path):
-        return Duet(RunConfig("a/one", "b/two", spec="two_voices", track="freeform", presets=[str(path)]),
+        return Song(RunConfig(["a/one", "b/two"], spec="two_voices", track="freeform", presets=[str(path)]),
                     ScriptedClient()).run()
     a = preset_file(tmp_path, GIVEN)
     b = preset_file(tmp_path, GIVEN, name="copy.yaml")
@@ -106,7 +106,7 @@ def test_all_sections_may_be_prewritten(tmp_path):
                 "ending": ["Now we walk back home"]}
     path = preset_file(tmp_path, sections)
     client = ScriptedClient()
-    r = Duet(RunConfig("a/one", "b/two", spec="two_voices", presets=[str(path)]), client).run()
+    r = Song(RunConfig(["a/one", "b/two"], spec="two_voices", presets=[str(path)]), client).run()
     assert client.calls == []
     assert r["scores"]["adherence"] == {}
     assert all(v["adherence"] is None for v in r["scores"]["by_singer"].values())

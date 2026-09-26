@@ -6,15 +6,18 @@ import argparse
 import csv
 import itertools
 import json
+import random
 import sys
+from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 from .llm import LLMError, OpenRouterClient
 from .orchestrate import (
-    CHORUS, MODES, NAMES, TRACKS, ConfigError, Duet, RunConfig, render_sheet, save,
+    CHORUS, NAMES, TRACKS, ConfigError, RunConfig, Song, render_sheet, save,
 )
 from .prompts import chorus_task, render_song_so_far, section_task, trade_line_task
+from .scenario import bundled_scenarios, load_scenario
 from .spec import bundled_specs, describe_section, load_spec
 from .verify import GATES, verify_section
 
@@ -28,11 +31,11 @@ def _client(args) -> OpenRouterClient:
                             effort=args.effort, seed=args.seed)
 
 
-def _config(args, model_1=None, model_2=None, mode=None, track=None) -> RunConfig:
+def _config(args, models=None, scenario=None, track=None) -> RunConfig:
     return RunConfig(
-        model_1=model_1 or args.model_1, model_2=model_2 or args.model_2,
-        mode=mode or args.mode, names=args.names,
-        persona_1=getattr(args, "persona_1", None), persona_2=getattr(args, "persona_2", None),
+        models=list(models or args.model),
+        scenario=scenario or args.scenario, names=args.names,
+        personas=list(getattr(args, "persona", None) or []),
         chorus=args.chorus, presets=args.preset, track=track or args.track,
         max_retries=args.retries, tolerance=args.tolerance,
         gates=[g.strip() for g in args.gates.split(",") if g.strip()],
@@ -43,12 +46,14 @@ def _config(args, model_1=None, model_2=None, mode=None, track=None) -> RunConfi
 
 def _common(p: argparse.ArgumentParser, single: bool = True) -> None:
     if single:
-        p.add_argument("--mode", choices=MODES, default="each_other")
+        p.add_argument("--scenario", default="each_other",
+                       help=f"bundled scenario ({', '.join(bundled_scenarios())}) or a YAML path")
         p.add_argument("--track", choices=TRACKS, default="strict")
     p.add_argument("--names", choices=NAMES, default="real")
-    p.add_argument("--chorus", choices=CHORUS, default="auto",
-                   help="auto: use a preset chorus if supplied, otherwise model_1; "
-                        "original: source chorus in the song YAML; model_1/model_2: generate it")
+    p.add_argument("--chorus", default="auto",
+                   help=f"{', '.join(CHORUS)}, or the singer number that writes it. auto: a preset "
+                        "chorus if supplied, otherwise the chorus's first singer; original: the "
+                        "source chorus in the song YAML")
     p.add_argument("--preset", action="append", default=[],
                    help="prewritten sections YAML file or bundled ID; repeat for multiple presets")
     p.add_argument("--retries", type=int, default=3, help="strict track: retries per part")
@@ -68,18 +73,18 @@ def _common(p: argparse.ArgumentParser, single: bool = True) -> None:
 def cmd_run(args) -> int:
     cfg = _config(args)
     try:
-        duet = Duet(cfg, None)
+        song = Song(cfg, None)
     except (ConfigError, ValueError, OSError) as e:
         _log(f"error: {e}")
         return 2
     if args.dry_run:
-        spec = duet.spec
-        for s in (1, 2):
-            print(f"===== system prompt, singer {s} =====\n{duet.threads[s][0]['content']}\n")
-        first = next((k for k in spec.generation_order if k not in duet.written), None)
+        spec = song.spec
+        for s in song.singers:
+            print(f"===== system prompt, singer {s} =====\n{song.threads[s][0]['content']}\n")
+        first = next((k for k in spec.generation_order if k not in song.written), None)
         if first is not None:
             sec = spec.sections[first]
-            so_far = render_song_so_far(spec, cfg, duet.written, duet.authors)
+            so_far = render_song_so_far(spec, cfg, song.written, song.authors)
             task = (chorus_task(spec, sec, so_far) if sec.is_chorus else
                     trade_line_task(spec, cfg, sec, 0, so_far) if sec.is_trade else
                     section_task(spec, cfg, sec, so_far))
@@ -87,11 +92,11 @@ def cmd_run(args) -> int:
         return 0
     try:
         client = _client(args)
-        duet.client = client
-        _log(f"{cfg.model_1} x {cfg.model_2} · {cfg.mode} · {cfg.names} · "
+        song.client = client
+        _log(f"{' x '.join(cfg.models)} · {song.scenario.id} · {cfg.names} · "
              f"chorus {cfg.chorus} · {cfg.track}")
-        duet.log = _log
-        result = duet.run()
+        song.log = _log
+        result = song.run()
         # Preserve paid generation even if optional judging fails.
         jp, mp = save(result, args.out)
         _log(f"saved {jp} and {mp}")
@@ -108,7 +113,7 @@ def cmd_run(args) -> int:
 
 def _run_one(args, cfg: RunConfig) -> dict:
     client = _client(args)
-    result = Duet(cfg, client).run()
+    result = Song(cfg, client).run()
     save(result, args.out)
     if args.judge:
         from .judge import rubric
@@ -117,24 +122,53 @@ def _run_one(args, cfg: RunConfig) -> dict:
     return result
 
 
+def lineups(models: list[str], singers: int, include_self: bool = False,
+            limit: int | None = None, seed: int = 0) -> list[tuple[str, ...]]:
+    """Ordered lineups, one model per singer. A limit samples lineups so that each
+    model fills each singer slot as evenly as possible."""
+    pool = (list(itertools.product(models, repeat=singers)) if include_self
+            else list(itertools.permutations(models, singers)))
+    if limit is None or limit >= len(pool):
+        return pool
+    random.Random(seed).shuffle(pool)
+    counts: dict[tuple[int, str], int] = defaultdict(int)
+    chosen = []
+    for _ in range(limit):
+        best = min(pool, key=lambda lu: sum(counts[(i, m)] for i, m in enumerate(lu)))
+        pool.remove(best)
+        chosen.append(best)
+        for i, m in enumerate(best):
+            counts[(i, m)] += 1
+    return chosen
+
+
 def cmd_matrix(args) -> int:
     models = [m.strip() for m in args.models.split(",") if m.strip()]
-    modes = [m.strip() for m in args.modes.split(",")]
     tracks = [t.strip() for t in args.tracks.split(",")]
-    pairs = [(a, b) for a, b in itertools.product(models, models) if a != b or args.include_self]
+    try:
+        spec = load_spec(args.spec)
+        scenarios = [(x.strip(), load_scenario(x.strip())) for x in args.scenarios.split(",") if x.strip()]
+    except (OSError, ValueError) as e:
+        _log(f"error: {e}")
+        return 2
+    casts = lineups(models, spec.singers, args.include_self, args.max_lineups, args.seed or 0)
+    if not casts:
+        _log(f"error: {spec.id} has {spec.singers} singers; give at least that many models "
+             f"or use --include-self")
+        return 2
     jobs = []
-    for (m1, m2), mode, track in itertools.product(pairs, modes, tracks):
-        cfg = _config(args, m1, m2, mode, track)
+    for cast, (name, sc), track in itertools.product(casts, scenarios, tracks):
+        cfg = _config(args, cast, name, track)
         try:
-            cfg.validate()
+            cfg.validate(spec, sc)
         except ConfigError as e:
-            _log(f"skip {m1} x {m2} {mode}: {e}")
+            _log(f"skip {' x '.join(cast)} {sc.id}: {e}")
             continue
         jobs += [cfg] * args.samples
-    _log(f"{len(jobs)} songs across {len(pairs)} ordered pairs")
+    _log(f"{len(jobs)} songs across {len(casts)} lineups")
     if args.dry_run:
         for c in jobs:
-            print(f"{c.model_1} x {c.model_2} · {c.mode} · {c.track}")
+            print(f"{' x '.join(c.models)} · {c.scenario} · {c.track}")
         return 0
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
@@ -147,18 +181,18 @@ def cmd_matrix(args) -> int:
                 r = f.result()
             except Exception as e:  # keep the sweep going
                 failures += 1
-                _log(f"[{i}/{len(jobs)}] FAILED {c.model_1} x {c.model_2} {c.mode} {c.track}: {e}")
+                _log(f"[{i}/{len(jobs)}] FAILED {' x '.join(c.models)} {c.scenario} {c.track}: {e}")
                 continue
-            b = r["scores"]["by_singer"]
-            row = {"id": r["id"], "model_1": c.model_1, "model_2": c.model_2, "mode": c.mode,
-                   "names": c.names, "chorus": r["config"]["chorus"], "track": c.track,
-                   "adherence_1": b["1"]["adherence"], "adherence_2": b["2"]["adherence"],
-                   "first_try_1": b["1"]["first_try_pass_rate"],
-                   "first_try_2": b["2"]["first_try_pass_rate"],
+            b = r["scores"]["by_singer"].values()
+            per = lambda k: ";".join("" if x[k] is None else f"{x[k]:.3f}" for x in b)
+            row = {"id": r["id"], "spec": r["spec"], "models": ";".join(c.models),
+                   "scenario": r["scenario_snapshot"]["id"], "names": c.names,
+                   "chorus": r["config"]["chorus"], "track": c.track,
+                   "adherence": per("adherence"), "first_try": per("first_try_pass_rate"),
                    "strict_pass": r["scores"]["strict_pass"], "cost": r["usage"]["cost"],
                    "judge_overall": r.get("judge", {}).get("scores", {}).get("overall")}
             rows.append(row)
-            _log(f"[{i}/{len(jobs)}] {c.model_1} x {c.model_2} {c.mode} {c.track} done")
+            _log(f"[{i}/{len(jobs)}] {' x '.join(c.models)} {c.scenario} {c.track} done")
     if rows:
         csv_path = out / "matrix.csv"
         new = not csv_path.exists()
@@ -279,29 +313,41 @@ def cmd_spec(args) -> int:
 def cmd_songs(args) -> int:
     for name in bundled_specs():
         spec = load_spec(name)
-        print(f"{name}: {spec.title} ({spec.artist})")
+        print(f"{name}: {spec.title} ({spec.artist}), {spec.singers} "
+              f"singer{'s' if spec.singers != 1 else ''}")
+    return 0
+
+
+def cmd_scenarios(args) -> int:
+    for name in bundled_scenarios():
+        sc = load_scenario(name)
+        most = sc.max_singers or "any"
+        print(f"{name} ({sc.min_singers} to {most} singers): {sc.text.strip() or '(no framing)'}")
     return 0
 
 
 def main(argv=None) -> int:
-    ap = argparse.ArgumentParser(prog="songbench", description="Parody duet benchmark for LLMs.")
+    ap = argparse.ArgumentParser(prog="songbench", description="Parody song benchmark for LLMs.")
     sub = ap.add_subparsers(dest="cmd", required=True)
 
-    p = sub.add_parser("run", help="write one duet")
-    p.add_argument("--model-1", required=True, help="OpenRouter id for singer 1 (goes first)")
-    p.add_argument("--model-2", required=True, help="OpenRouter id for singer 2")
-    p.add_argument("--persona-1", help="singer 1's name (names=assigned, or override for real)")
-    p.add_argument("--persona-2", help="singer 2's name")
+    p = sub.add_parser("run", help="write one song")
+    p.add_argument("--model", action="append", required=True,
+                   help="OpenRouter id; repeat once per singer, in singer order")
+    p.add_argument("--persona", action="append",
+                   help="singer name; repeat once per singer (names=assigned, or override for real)")
     p.add_argument("--dry-run", action="store_true", help="print the prompts; call nothing")
     _common(p)
     p.set_defaults(func=cmd_run)
 
-    p = sub.add_parser("matrix", help="sweep model pairs and settings")
+    p = sub.add_parser("matrix", help="sweep model lineups and settings")
     p.add_argument("--models", required=True, help="comma-separated OpenRouter ids")
-    p.add_argument("--modes", default="each_other", help=f"comma list of {','.join(MODES)}")
+    p.add_argument("--scenarios", default="each_other", help="comma list of scenario ids or YAML paths")
     p.add_argument("--tracks", default="strict", help=f"comma list of {','.join(TRACKS)}")
     p.add_argument("--samples", type=int, default=1, help="songs per configuration")
-    p.add_argument("--include-self", action="store_true", help="also pair each model with itself")
+    p.add_argument("--include-self", action="store_true",
+                   help="allow a model to fill more than one singer slot")
+    p.add_argument("--max-lineups", type=int,
+                   help="sample this many lineups, balancing each model across singer slots")
     p.add_argument("--workers", type=int, default=4)
     p.add_argument("--dry-run", action="store_true", help="list the jobs; call nothing")
     _common(p, single=False)
@@ -340,6 +386,9 @@ def main(argv=None) -> int:
 
     p = sub.add_parser("songs", help="list bundled song templates; custom YAML files use --spec")
     p.set_defaults(func=cmd_songs)
+
+    p = sub.add_parser("scenarios", help="list bundled scenarios; custom YAML files use --scenario")
+    p.set_defaults(func=cmd_scenarios)
 
     args = ap.parse_args(argv)
     return args.func(args)

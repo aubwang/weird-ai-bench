@@ -6,7 +6,7 @@ import json
 import re
 
 from .llm import family
-from .orchestrate import render_sheet
+from .orchestrate import render_sheet, result_scenario
 from .spec import result_spec, syllable_map
 
 CRITERIA = {
@@ -17,12 +17,20 @@ CRITERIA = {
                     "without just copying lines?",
     "coherence": "Does each part have a point, and do the sections flow naturally into each other?",
     "interplay": "Do the later parts actually respond to what the "
-                 "other singer wrote?",
+                 "other singers wrote?",
 }
 
 
+def criteria(result: dict) -> dict[str, str]:
+    """A solo song has no one to play off, so it isn't scored on interplay."""
+    crit = dict(CRITERIA)
+    if len(result["config"]["models"]) == 1:
+        del crit["interplay"]
+    return crit
+
+
 def same_family_warning(result: dict, judge_model: str) -> str | None:
-    fams = {family(result["config"]["model_1"]), family(result["config"]["model_2"])}
+    fams = {family(m) for m in result["config"]["models"]}
     if family(judge_model) in fams:
         return (f"judge {judge_model} is from the same family as a singer; "
                 f"scores may favor its own family's style")
@@ -46,14 +54,18 @@ def _context(result: dict) -> str:
         chorus_note = ("Prewritten sections supplied to the singers: " + ", ".join(given) +
                        ". Evaluate the generated sections and how they fit with the supplied material. "
                        "Do not credit or penalize the models for writing the supplied sections.")
-    mode_note = {
-        "each_other": "The singers were told they're singing to each other.",
-        "third_party": "The singers were told to sing to the humans who trained and use them.",
-        "none": "The singers were given no guidance about who they're singing to.",
-    }[cfg["mode"]]
+    scenario = result_scenario(result)
+    setup = [scenario.render(spec)]
+    setup += [f"Singer {k} was also told: {scenario.singer_text(spec, k)}"
+              for k in sorted(scenario.per_singer) if scenario.singer_text(spec, k)]
+    setup = "\n".join(x for x in setup if x.strip())
+    setup_note = (f"The singers were given this setup:\n<setup>\n{setup}\n</setup>" if setup
+                  else "The singers were given no setup beyond the song itself.")
+    n = len(cfg["models"])
+    by = "one AI model" if n == 1 else f"{n} AI models"
     return (
-        f'This is a parody duet written by two AI models to the tune of "{spec.title}" '
-        f"({spec.artist}). {mode_note} {chorus_note}\n\n"
+        f'This is a parody written by {by} to the tune of "{spec.title}" '
+        f"({spec.artist}). {chorus_note}\n\n{setup_note}\n\n"
         f"Target syllables per line:\n{syllable_map(spec)}\n\n"
         f"You can't hear it, so judge singability from the text and the target counts. "
         f"Text inside <adlib> tags is an uncounted ad-lib, not part of the main line's meter or rhyme."
@@ -68,9 +80,7 @@ def _extract_json(text: str) -> dict:
 
 
 def rubric(result: dict, client, judge_model: str) -> dict:
-    crit = dict(CRITERIA)
-    if result["config"]["mode"] == "none":
-        crit["interplay"] += " (Score it even though they weren't told to respond.)"
+    crit = criteria(result)
     sheet = render_sheet(result, blind=True, show_scores=False)
     keys = ", ".join(f'"{k}"' for k in crit)
     prompt = (
@@ -99,11 +109,11 @@ def rubric(result: dict, client, judge_model: str) -> dict:
 def pairwise(a: dict, b: dict, client, judge_model: str) -> dict:
     """Compare two songs twice with positions swapped. Returns winner 'a', 'b', or 'tie'."""
     votes = []
+    weigh = ", ".join(k.replace("_", " ") for k in criteria(a))
     for first, second, flip in ((a, b, False), (b, a, True)):
         prompt = (
             f"{_context(first)}\n\nHere are two songs written under the same setup. Which is "
-            f"the better parody overall, weighing singability, humor, parody craft, coherence, "
-            f"and how the singers play off each other?\n\n"
+            f"the better parody overall, weighing {weigh}?\n\n"
             f"SONG 1:\n\n{render_sheet(first, blind=True, show_scores=False)}\n\n"
             f"SONG 2:\n\n{render_sheet(second, blind=True, show_scores=False)}\n\n"
             f'Reply with JSON only: {{"winner": 1 or 2 or "tie", "reason": "one sentence"}}'
