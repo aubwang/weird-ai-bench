@@ -11,7 +11,7 @@ from songbench.cli import main
 from songbench.judge import pairwise, rubric
 from songbench.leaderboard import fit_additive_bt, gate_stats, group_key
 from songbench.llm import LLMError, ScriptedClient
-from songbench.orchestrate import ConfigError, Duet, RunConfig, render_sheet, save
+from songbench.orchestrate import ConfigError, Song, RunConfig, render_sheet, save
 from songbench.prompts import parse_lyrics
 from songbench.spec import load_spec, result_spec
 
@@ -29,7 +29,7 @@ def script():
 
 def test_strict_retries_and_hides_failed_draft(tmp_path):
     client = ScriptedClient([CHORUS, BAD, OPENING, *TAIL])
-    r = Duet(RunConfig("a/one", "b/two"), client).run()
+    r = Song(RunConfig(["a/one", "b/two"]), client).run()
     turn = next(t for t in r["turns"] if t["section"] == "opening")
     assert turn["retries"] == 1 and not turn["first_try_pass"] and turn["final_pass"]
     assert "very bright" not in " ".join(m["content"] for m in r["threads"]["2"])
@@ -40,7 +40,7 @@ def test_strict_retries_and_hides_failed_draft(tmp_path):
 
 
 def test_freeform_does_not_retry():
-    r = Duet(RunConfig("a/one", "b/two", track="freeform"),
+    r = Song(RunConfig(["a/one", "b/two"], track="freeform"),
              ScriptedClient([CHORUS, BAD, *TAIL])).run()
     assert not r["scores"]["strict_pass"]
     assert all(t["retries"] == 0 for t in r["turns"])
@@ -49,7 +49,7 @@ def test_freeform_does_not_retry():
 
 
 def test_strict_exhausts_retries_and_continues():
-    r = Duet(RunConfig("a/one", "b/two", max_retries=2),
+    r = Song(RunConfig(["a/one", "b/two"], max_retries=2),
              ScriptedClient([CHORUS, BAD, BAD, BAD, *TAIL])).run()
     assert r["turns"][1]["retries"] == 2
     assert not r["turns"][1]["final_pass"]
@@ -58,7 +58,7 @@ def test_strict_exhausts_retries_and_continues():
 
 def test_chorus_can_be_written_by_second_singer():
     client = ScriptedClient(script())
-    r = Duet(RunConfig("a/one", "b/two", chorus="model_2"), client).run()
+    r = Song(RunConfig(["a/one", "b/two"], chorus="2"), client).run()
     assert client.calls[0]["model"] == "b/two"
     assert r["parts"]["refrain"]["author"] == 2
     assert r["scores"]["strict_pass"]
@@ -66,12 +66,12 @@ def test_chorus_can_be_written_by_second_singer():
 
 def test_anonymous_and_assigned_names():
     with pytest.raises(ConfigError):
-        Duet(RunConfig("a/one", "b/two", names="anonymous"), ScriptedClient())
+        Song(RunConfig(["a/one", "b/two"], names="anonymous"), ScriptedClient())
     with pytest.raises(ConfigError):
-        Duet(RunConfig("a/one", "b/two", names="assigned"), ScriptedClient())
-    d = Duet(RunConfig("a/one", "b/two", names="assigned", persona_1="North", persona_2="South"), ScriptedClient())
+        Song(RunConfig(["a/one", "b/two"], names="assigned"), ScriptedClient())
+    d = Song(RunConfig(["a/one", "b/two"], names="assigned", personas=["North", "South"]), ScriptedClient())
     assert "You are Singer 1, North" in d.threads[1][0]["content"]
-    d = Duet(RunConfig("a/one", "b/two", names="anonymous", mode="third_party"), ScriptedClient())
+    d = Song(RunConfig(["a/one", "b/two"], names="anonymous", scenario="none"), ScriptedClient())
     assert "a/one" not in d.threads[1][0]["content"]
 
 
@@ -81,7 +81,7 @@ def test_parse_annotations_and_keep_adlibs():
 
 
 def test_blind_judging_and_stats():
-    r = Duet(RunConfig("a/one", "b/two"), ScriptedClient(script())).run()
+    r = Song(RunConfig(["a/one", "b/two"]), ScriptedClient(script())).run()
     assert "a/one" not in render_sheet(r, blind=True)
     jc = ScriptedClient(['{"singability":8,"humor":9,"parody_craft":7,"coherence":8,"interplay":9,"notes":"ok"}'])
     j = rubric(r, jc, "a/judge")
@@ -110,7 +110,7 @@ def test_custom_spec_survives_source_removal(tmp_path, spec_id):
     spec.sections["opening"].label = "Custom opening"
     path = tmp_path / "custom.yaml"
     path.write_text(yaml.safe_dump(asdict(spec)))
-    r = Duet(RunConfig("a/one", "b/two", spec=str(path)), ScriptedClient(script())).run()
+    r = Song(RunConfig(["a/one", "b/two"], spec=str(path)), ScriptedClient(script())).run()
     jp, mp = save(r, tmp_path / "runs")
     path.unlink()
     loaded = json.loads(jp.read_text())
@@ -124,7 +124,7 @@ def test_custom_spec_survives_source_removal(tmp_path, spec_id):
 
 def test_legacy_run_and_template_grouping():
     from copy import deepcopy
-    r = Duet(RunConfig("a/one", "b/two"), ScriptedClient(script())).run()
+    r = Song(RunConfig(["a/one", "b/two"]), ScriptedClient(script())).run()
     other = deepcopy(r)
     other["spec_snapshot"]["sections"]["opening"]["lines"][0]["syllables"] += 1
     assert group_key(r) != group_key(other)
@@ -136,7 +136,7 @@ def test_legacy_run_and_template_grouping():
 
 @pytest.mark.parametrize("track", ["freeform", "strict"])
 def test_empty_chorus_does_not_crash(track, tmp_path):
-    r = Duet(RunConfig("a/one", "b/two", track=track, max_retries=1), ScriptedClient()).run()
+    r = Song(RunConfig(["a/one", "b/two"], track=track, max_retries=1), ScriptedClient()).run()
     assert r["parts"]["refrain"]["lines"] == []
     assert not r["scores"]["strict_pass"]
     assert r["verification"]["refrain"]["structure_errors"]
@@ -153,7 +153,7 @@ def test_judge_failure_keeps_song(monkeypatch, tmp_path, command, failure):
         raise ValueError("invalid judge JSON")
     monkeypatch.setattr("songbench.judge.rubric", fail_judge)
     args = [command, "--judge", "c/judge", "--out", str(tmp_path)]
-    args += (["--model-1", "a/one", "--model-2", "b/two"] if command == "run"
+    args += (["--model", "a/one", "--model", "b/two"] if command == "run"
              else ["--models", "a/one", "--include-self", "--workers", "1"])
     if command == "run" and failure == "json":
         with pytest.raises(ValueError):

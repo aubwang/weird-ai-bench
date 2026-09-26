@@ -1,8 +1,8 @@
 # songbench
 
-Two LLMs co-write a parody duet against a song template. songbench relays their turns, checks syllables, stress, and rhyme, and optionally judges the finished song. Use it to compare constraint-following, humor, and how well one singer responds to the other.
+LLMs co-write a parody song against a song template, one model per singer. songbench relays their turns, checks syllables, stress, and rhyme, and optionally judges the finished song. Use it to compare constraint-following, humor, and how well the singers respond to each other.
 
-The bundled default, `two_voices`, is a small synthetic example, not a transcription of a recording. Each song has its own YAML template. Original lyrics and private parody material belong in ignored local files; the public examples and tests use synthetic text. See [the authoring guide](docs/authoring.md) for pacing, rhyme groups, presets, and ad-libs.
+The bundled default, `two_voices`, is a small synthetic duet, not a transcription of a recording. Each song has its own YAML template, which sets how many singers it has: a solo, a duet, or more. What the singers are told about the song and each other comes from a separate scenario file. Original lyrics and private parody material belong in ignored local files; the public examples and tests use synthetic text. See [the authoring guide](docs/authoring.md) for pacing, rhyme groups, presets, and ad-libs.
 
 ## Install
 
@@ -18,29 +18,55 @@ When `SONGBENCH_BASE_URL` is set, the client requires `SONGBENCH_API_KEY` (or an
 ## Write one song
 
 ```sh
-songbench run --model-1 openai/gpt-5.1 --model-2 anthropic/claude-sonnet-5 --spec two_voices --preset two_voices_seed
+songbench run --model openai/gpt-5.1 --model anthropic/claude-sonnet-5 --spec two_voices --preset two_voices_seed
 ```
+
+Give `--model` once per singer, in singer order; the count must match the song's `singers`.
 
 This prints the lyric sheet and saves `runs/<id>.json` (every prompt, response, check, and retry) and `runs/<id>.md`. Add `--dry-run` to print the prompts without calling anything, and `--judge <model>` to score the song when it's done.
 
 Completed songs are saved before judging, so a judge failure preserves the generation. Retry judging later with `songbench judge runs/<id>.json --judge <model>`.
 
-The turn order follows the selected spec. The example has a refrain, an opening, a traded section, and an ending. Other templates can use different sections, orders, and trading patterns, including no shared chorus. Each model has its own conversation thread and sees the other singer's final lines, never their failed drafts.
+The turn order follows the selected spec. The example has a refrain, an opening, a traded section, and an ending. Other templates can use different sections, orders, singer counts, and trading patterns, including no shared chorus. Each model has its own conversation thread and sees the other singers' final lines, never their failed drafts.
 
 ## Settings
 
 | Flag | Options | What it does |
 |---|---|---|
-| `--mode` | `each_other` (default), `third_party`, `none` | Who the singers address: each other, the humans who trained and use them, or no guidance |
-| `--names` | `real` (default), `assigned`, `anonymous` | Real model names; personas you pick with `--persona-1/-2` (e.g. DeepSeek plays "ChatGPT"); or "two unnamed AI models" |
-| `--chorus` | `auto` (default), `fixed`, `original`, `model_1`, `model_2` | Auto uses a preset chorus if supplied, otherwise model 1 writes it. Original uses the song YAML's source chorus |
+| `--scenario` | `each_other` (default), `none`, or a YAML path | The framing the singers get: what they're writing and who they address. See [Scenarios](#scenarios) |
+| `--names` | `real` (default), `assigned`, `anonymous` | Real model names; personas you pick with one `--persona` per singer (e.g. DeepSeek plays "ChatGPT"); or unnamed singers |
+| `--chorus` | `auto` (default), `fixed`, `original`, or a singer number | Auto uses a preset chorus if supplied, otherwise the chorus's first singer writes it. Original uses the song YAML's source chorus |
 | `--preset` | bundled ID or YAML path; repeatable | Supplies prewritten sections of any kind, separately from the song template |
 | `--track` | `strict` (default), `freeform` | Strict sends failed checks back for a rewrite (up to `--retries`, default 3). Freeform is one shot, and the checks are only scored |
 | `--gates` | any of `structure,syllables,stress,split,rhyme,internal_rhyme` | Which checks must pass on the strict track |
 | `--tolerance` | integer | Allowed syllable miss per line (default 0) |
 | `--effort`, `--temperature`, `--seed`, `--max-tokens` | | Passed to the model |
 
-`anonymous` can't be combined with `each_other`, since the first singer would have nothing specific to answer.
+`anonymous` can't be combined with `each_other` (or any scenario with `requires_names`), since the first singer would have nothing specific to answer.
+
+## Scenarios
+
+The system prompt has no built-in framing. The scenario file supplies it, and
+songbench adds only mechanics: the cast of singers, the output-format rules, and
+the song's reference lyrics. `songbench scenarios` lists the bundled ones:
+`each_other` (the singers address each other) and `none` (no guidance about who
+they address). Keep your own in `scenarios/local/`, which is gitignored.
+
+```yaml
+id: third_party
+text: >-
+  We're writing a parody of "{title}" by {artist}. Every singer is an AI model.
+  Both singers are singing to the humans who trained and use them, not to each other.
+per_singer:            # optional: extra text for one singer only
+  2: You get the last word.
+min_singers: 2         # optional limits on the song's singer count
+max_singers: 2
+requires_names: false  # true rejects --names anonymous
+```
+
+`{title}`, `{artist}`, and `{singers}` are filled in from the song. The judge
+sees the scenario text too, including per-singer text, but never model names.
+Leaderboard comparisons group runs by the scenario's text, not its id or path.
 
 The song YAML is the source of truth for both the original lyrics and pacing.
 Put original text in each line's `reference` field; section and speaker tags
@@ -100,9 +126,9 @@ songbench spec                          # print the song map
 ## Benchmark
 
 ```sh
-# Every ordered pair, both tracks, two songs each
+# Every ordered lineup, both tracks, two songs each
 songbench matrix --models openai/gpt-5.1,anthropic/claude-sonnet-5,deepseek/deepseek-v4 \
-  --modes each_other,third_party --tracks strict,freeform --samples 2 --out runs/
+  --scenarios each_other,none --tracks strict,freeform --samples 2 --out runs/
 
 songbench stats runs/                                   # checks only, no judge calls
 songbench leaderboard runs/ --judge google/gemini-3-pro # pairwise judging -> Elo
@@ -111,15 +137,15 @@ songbench judge runs/*.json --judge google/gemini-3-pro # rubric scores per song
 
 The model ids above are examples; check [openrouter.ai/models](https://openrouter.ai/models) for current ones.
 
-`matrix` runs ordered pairs, so each model takes both roles, and appends a row per song to `runs/matrix.csv`. Use `--dry-run` to list the jobs first. A song costs roughly 5 to 20 calls.
+`matrix` runs ordered lineups, one model per singer, so each model takes every role, and appends a row per song to `runs/matrix.csv` (per-singer columns are `;`-separated in singer order). `--include-self` lets one model fill several slots. Lineups grow fast with more singers, so `--max-lineups N` samples N of them while keeping each model spread evenly across the singer slots. Use `--dry-run` to list the jobs first. A song costs roughly 5 to 20 calls.
 
 `stats` reports, per model and track: line adherence, first-try pass rate per turn, final pass rate, and retries per song.
 
-`leaderboard` compares songs written under the same settings, two at a time. Each pair is judged twice with the order swapped, and a disagreement counts as a tie, which cancels position bias. Results are fitted with an additive Bradley-Terry model: a song's strength is the sum of its two models' strengths, which is what lets a duet benchmark rank individual models. Judgments are cached in `judgments.jsonl`, so re-running only pays for new pairs.
+`leaderboard` compares songs written under the same settings, two at a time. Each pair is judged twice with the order swapped, and a disagreement counts as a tie, which cancels position bias. Results are fitted with an additive Bradley-Terry model: a song's strength is the sum of its singers' model strengths, which is what lets a benchmark of shared songs rank individual models. Judgments are cached in `judgments.jsonl`, so re-running only pays for new pairs.
 
-The judge is blind: it sees "Singer 1" and "Singer 2", never model ids. Persona names inside the lyrics are still visible with `--names real` or `assigned`. Pick a judge from a different family than the singers; songbench warns when it isn't.
+The judge is blind: it sees "Singer 1", "Singer 2", and so on, never model ids. Persona names inside the lyrics are still visible with `--names real` or `assigned`. Pick a judge from a different family than the singers; songbench warns when it isn't.
 
-Rubric criteria (1 to 10): singability, humor, parody craft, coherence, and interplay. The judge can't hear the song, so `singability_blended` averages its score with the automated meter score.
+Rubric criteria (1 to 10): singability, humor, parody craft, coherence, and interplay (skipped for solo songs). The judge can't hear the song, so `singability_blended` averages its score with the automated meter score.
 
 ## How the checks work
 
@@ -138,7 +164,7 @@ List bundled templates with `songbench songs`. Select one by ID, or pass a YAML 
 
 ```sh
 songbench spec --spec two_voices
-songbench run --model-1 provider/model-a --model-2 provider/model-b --spec songs/local/my-song.yaml
+songbench run --model provider/model-a --model provider/model-b --spec songs/local/my-song.yaml
 ```
 
 Copy `songbench/data/specs/two_voices.yaml` as a starting point. It demonstrates
@@ -157,12 +183,13 @@ opening:
 ```
 
 This section sits under the top-level `sections` mapping. The complete file also
-needs `id`, `title`, `artist`, `generation_order`, and `performance_order`.
-`generation_order` includes every section exactly once; `performance_order` may
-repeat sections. Section keys and labels are arbitrary. Each section chooses
-`singer: 1` or `2`, `trade: [1, 2, ...]` (one singer per line), or `sung_by: both`
-for the optional shared chorus. The runner currently supports two singers and
-at most one shared chorus; repeat its key to perform it again.
+needs `id`, `title`, `artist`, `singers` (how many, 1 or more), `generation_order`,
+and `performance_order`. `generation_order` includes every section exactly once;
+`performance_order` may repeat sections. Section keys and labels are arbitrary.
+Each section chooses `singer: N`, `trade: [1, 3, 2, ...]` (one singer per line), or
+`sung_by` for the optional shared chorus: `all`, a list such as `[2, 3]`, or `both`
+in a two-singer song. Every singer must sing somewhere. The runner supports at
+most one shared chorus; repeat its key to perform it again.
 
 Each line takes `syllables`, and optionally `reference`, `stress`, `split`,
 `rhyme`, `internal_rhyme`, `hook`, `repeats_hook`, `echo`, `adlibs`, and `note`. Stress
@@ -185,8 +212,8 @@ New runs embed the resolved template, so rendering and judging still work after 
 
 ## Private files
 
-Keep song source files under `songs/local/` and prewritten material under
-`presets/local/`. Both directories, raw `lyrics_*.txt` files, local test fixtures,
+Keep song source files under `songs/local/`, prewritten material under
+`presets/local/`, and your own scenarios under `scenarios/local/`. These directories, raw `lyrics_*.txt` files, local test fixtures,
 and generated runs are ignored. Ignoring a file does not remove it from existing
 Git history; check what is staged before publishing. Private material is still
 sent to the configured model endpoint when you explicitly use it in a run.

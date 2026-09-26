@@ -11,6 +11,7 @@ as examples.
 id: night_walk
 title: Night Walk (example)
 artist: synthetic example
+singers: 1
 generation_order: [verse]
 performance_order: [verse]
 sections:
@@ -26,10 +27,13 @@ sections:
       - {reference: "We watch the light", syllables: 4, rhyme: A}
 ```
 
-The runner always has two available singers. Sections choose `singer: 1` or `2`,
-`trade: [1, 2, ...]` for line-by-line exchanges, or `sung_by: both` for the optional
-shared chorus. At most one shared chorus is supported. Every section appears
-once in `generation_order`; `performance_order` can repeat section keys.
+`singers` fixes how many singers the song has; a run gives one model per singer.
+Sections choose `singer: N`, `trade: [1, 2, ...]` for line-by-line exchanges, or
+`sung_by` for the optional shared chorus: `all`, a list such as `[1, 3]`, or `both`
+in a two-singer song. Every singer must sing somewhere. At most one shared chorus
+is supported. Every section appears once in `generation_order`;
+`performance_order` can repeat section keys. For a different cast size, write a
+separate template.
 
 Original reference lines provide context, not required output words. Section
 and speaker tags are built automatically. The same reference is used for the
@@ -117,7 +121,7 @@ tags always mean an uncounted ad-lib. Keep tags on the main lyric line.
 ```sh
 songbench songs
 songbench spec --spec songs/local/night_walk.yaml
-songbench run --model-1 provider/model-a --model-2 provider/model-b \
+songbench run --model provider/model-a --scenario none \
   --spec songs/local/night_walk.yaml --dry-run
 ```
 

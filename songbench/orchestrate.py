@@ -1,4 +1,4 @@
-"""Run one duet: relay turns between two models, check each part, save a transcript."""
+"""Run one song: relay turns between the singers' models, check each part, save a transcript."""
 
 from __future__ import annotations
 
@@ -16,12 +16,12 @@ from .prompts import (
     trade_line_task, chorus_task, label, parse_lyrics, render_song_so_far,
     retry_message, section_task, system_prompt,
 )
-from .spec import SongSpec, format_lyric, load_preset, load_spec, result_spec
+from .scenario import Scenario, load_scenario, scenario_from_dict
+from .spec import SongSpec, format_lyric, group_label, load_preset, load_spec, result_spec
 from .verify import GATES, LineReport, SectionReport, originality, verify_section
 
-MODES = ("none", "each_other", "third_party")
 NAMES = ("real", "assigned", "anonymous")
-CHORUS = ("auto", "fixed", "original", "model_1", "model_2")
+CHORUS = ("auto", "fixed", "original")  # or a singer number, who writes it
 TRACKS = ("strict", "freeform")
 
 
@@ -31,12 +31,10 @@ class ConfigError(ValueError):
 
 @dataclass
 class RunConfig:
-    model_1: str
-    model_2: str
-    mode: str = "each_other"
+    models: list[str]  # one per singer, in singer order
+    scenario: str = "each_other"  # bundled scenario id or YAML path
     names: str = "real"
-    persona_1: str | None = None
-    persona_2: str | None = None
+    personas: list[str | None] = field(default_factory=list)
     chorus: str = "auto"
     presets: list[str] = field(default_factory=list)
     track: str = "strict"
@@ -48,25 +46,48 @@ class RunConfig:
     effort: str | None = None
     seed: int | None = None
 
-    def validate(self) -> None:
-        for name, val, allowed in (("mode", self.mode, MODES), ("names", self.names, NAMES),
-                                   ("chorus", self.chorus, CHORUS), ("track", self.track, TRACKS)):
+    def validate(self, spec: SongSpec | None = None, scenario: Scenario | None = None) -> None:
+        """Check the settings; with a spec and scenario, also check they fit this song."""
+        self.chorus = str(self.chorus)
+        for name, val, allowed in (("names", self.names, NAMES), ("track", self.track, TRACKS)):
             if val not in allowed:
                 raise ConfigError(f"{name} must be one of {', '.join(allowed)}; got {val!r}")
-        if self.names == "anonymous" and self.mode == "each_other":
-            raise ConfigError(
-                "names=anonymous can't be combined with mode=each_other: the first singer "
-                "would have nothing specific to respond to. Use mode none or third_party.")
-        if self.names == "assigned" and not (self.persona_1 and self.persona_2):
-            raise ConfigError("names=assigned needs --persona-1 and --persona-2.")
+        if self.chorus not in CHORUS and not self.chorus.isdigit():
+            raise ConfigError(f"chorus must be one of {', '.join(CHORUS)} or a singer number; "
+                              f"got {self.chorus!r}")
+        if not self.models:
+            raise ConfigError("give one model per singer.")
+        n = len(self.models)
+        if self.personas and len(self.personas) != n:
+            raise ConfigError(f"give one persona per singer: {n} models, {len(self.personas)} personas.")
+        if self.names == "assigned" and not (self.personas and all(self.personas)):
+            raise ConfigError("names=assigned needs a --persona for every singer.")
         bad = [g for g in self.gates if g not in GATES]
         if bad:
             raise ConfigError(f"unknown gates {bad}; choose from {', '.join(GATES)}")
         if self.names == "real":
-            self.persona_1 = self.persona_1 or display_name(self.model_1)
-            self.persona_2 = self.persona_2 or display_name(self.model_2)
+            given = self.personas or [None] * n
+            self.personas = [p or display_name(m) for p, m in zip(given, self.models)]
         elif self.names == "anonymous":
-            self.persona_1 = self.persona_2 = None
+            self.personas = [None] * n
+        if spec is not None and n != spec.singers:
+            raise ConfigError(f"{spec.id} has {spec.singers} singer{'s' if spec.singers != 1 else ''}; "
+                              f"got {n} model{'s' if n != 1 else ''}.")
+        if scenario is not None:
+            if n < scenario.min_singers or (scenario.max_singers is not None and n > scenario.max_singers):
+                most = f" to {scenario.max_singers}" if scenario.max_singers != scenario.min_singers else ""
+                raise ConfigError(f"scenario {scenario.id} is for {scenario.min_singers}"
+                                  f"{most if scenario.max_singers else ' or more'} singers; got {n}.")
+            if scenario.requires_names and self.names == "anonymous":
+                raise ConfigError(
+                    f"names=anonymous can't be combined with scenario {scenario.id}: it needs "
+                    f"named singers, or the first singer would have nothing specific to respond to.")
+        if spec is not None and self.chorus.isdigit():
+            ck = spec.chorus_key()
+            if ck is None:
+                raise ConfigError(f"{spec.id} has no shared chorus to write.")
+            if int(self.chorus) not in spec.sections[ck].sung_by:
+                raise ConfigError(f"singer {self.chorus} doesn't sing the {spec.sections[ck].label.lower()}.")
 
 
 def line_score(l: LineReport) -> float:
@@ -79,18 +100,25 @@ def line_score(l: LineReport) -> float:
     return sum(checks) / len(checks)
 
 
-class Duet:
-    def __init__(self, cfg: RunConfig, client, spec: SongSpec | None = None, log=None):
-        cfg.validate()
+class Song:
+    def __init__(self, cfg: RunConfig, client, spec: SongSpec | None = None,
+                 scenario: Scenario | None = None, log=None):
+        self.spec = spec or load_spec(cfg.spec)
+        try:
+            self.scenario = scenario or load_scenario(cfg.scenario)
+        except (OSError, ValueError) as e:
+            raise ConfigError(f"Cannot load scenario: {e}") from e
+        cfg.validate(self.spec, self.scenario)
         self.cfg = cfg
         self.client = client
-        self.spec = spec or load_spec(cfg.spec)
         self.ov = self.spec.syllable_overrides
         self.log = log or (lambda msg: None)
         self.reference_text = self.spec.reference_text()
+        self.singers = range(1, self.spec.singers + 1)
         self.threads = {
-            s: [{"role": "system", "content": system_prompt(self.spec, cfg, s, self.reference_text)}]
-            for s in (1, 2)
+            s: [{"role": "system", "content": system_prompt(
+                self.spec, cfg, self.scenario, s, self.reference_text)}]
+            for s in self.singers
         }
         self.written: dict[str, list[str]] = {}
         self.authors: dict[str, object] = {}
@@ -113,8 +141,8 @@ class Duet:
                 self.authors[key] = "fixed"
         if ck in self.written and cfg.chorus not in ("auto", "fixed"):
             raise ConfigError("Preset supplies the chorus; use --chorus auto/fixed or remove that preset section.")
-        if cfg.chorus == "auto":
-            cfg.chorus = "fixed" if ck in self.written else "model_1"
+        if ck and cfg.chorus == "auto":
+            cfg.chorus = "fixed" if ck in self.written else str(self.spec.sections[ck].sung_by[0])
         if ck and cfg.chorus == "fixed" and ck not in self.written:
             raise ConfigError("chorus=fixed needs a --preset supplying the chorus.")
         if ck and cfg.chorus == "original":
@@ -127,7 +155,7 @@ class Duet:
         self.usage = {"prompt_tokens": 0, "completion_tokens": 0, "cost": 0.0, "calls": 0}
 
     def model(self, singer: int) -> str:
-        return self.cfg.model_1 if singer == 1 else self.cfg.model_2
+        return self.cfg.models[singer - 1]
 
     # ------------------------------------------------------------ turns
 
@@ -225,7 +253,7 @@ class Duet:
                 continue
             sec = spec.sections[key]
             if sec.is_chorus:
-                singer = 1 if cfg.chorus == "model_1" else 2
+                singer = int(cfg.chorus)
                 self.log(f"{sec.label}: {label(cfg, singer)} writes it")
                 so_far = render_song_so_far(spec, cfg, self.written, self.authors)
                 self._write_section(key, singer, chorus_task(spec, sec, so_far))
@@ -245,7 +273,7 @@ class Duet:
         cfg, spec = self.cfg, self.spec
         hook = self._hook()
         verification = {}
-        line_scores: dict[int, list[float]] = {1: [], 2: []}
+        line_scores: dict[int, list[float]] = {s: [] for s in self.singers}
         for key in spec.generation_order:
             sec = spec.sections[key]
             lines = self.written.get(key, [])
@@ -256,11 +284,11 @@ class Duet:
             if isinstance(author, list):
                 for s, sc in zip(author, per_line):
                     line_scores[s].append(sc)
-            elif author in (1, 2):
+            elif author in line_scores:
                 line_scores[author].extend(per_line)
 
         by_singer = {}
-        for s in (1, 2):
+        for s in self.singers:
             turns = [t for t in self.turns if t["singer"] == s]
             by_singer[str(s)] = {
                 "model": self.model(s),
@@ -272,11 +300,12 @@ class Duet:
             }
         generated = [k for k in spec.generation_order if self.authors.get(k) not in ("fixed", "original")]
         result = {
-            "version": 1,
-            "id": _run_id(cfg),
+            "version": 2,
+            "id": _run_id(cfg, self.scenario.id),
             "created": datetime.now(timezone.utc).isoformat(timespec="seconds"),
             "spec": spec.id,
             "spec_snapshot": asdict(spec),
+            "scenario_snapshot": asdict(self.scenario),
             "config": asdict(cfg),
             "reference_lyrics": ({"sha256": hashlib.sha256(self.reference_text.encode("utf-8")).hexdigest()}
                                  if self.reference_text is not None else None),
@@ -303,10 +332,15 @@ def _slug(s: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", s.lower()).strip("-")[:40]
 
 
-def _run_id(cfg: RunConfig) -> str:
+def _run_id(cfg: RunConfig, scenario_id: str) -> str:
     ts = datetime.now().strftime("%Y%m%d-%H%M%S")
-    return (f"{ts}-{_slug(display_name(cfg.model_1))}-x-{_slug(display_name(cfg.model_2))}-"
-            f"{cfg.mode}-{cfg.names}-{cfg.chorus}-{cfg.track}-{uuid.uuid4().hex[:4]}")
+    cast = "-x-".join(_slug(display_name(m))[:24] for m in cfg.models)
+    return (f"{ts}-{cast}-{_slug(scenario_id)}-{cfg.names}-{cfg.chorus}-{cfg.track}-"
+            f"{uuid.uuid4().hex[:4]}")
+
+
+def result_scenario(result: dict) -> Scenario:
+    return scenario_from_dict(result["scenario_snapshot"])
 
 
 # ------------------------------------------------------------- rendering
@@ -315,8 +349,9 @@ def render_sheet(result: dict, spec: SongSpec | None = None, blind: bool = False
                  show_scores: bool = True) -> str:
     spec = spec or result_spec(result)
     cfg = result["config"]
-    names = {1: cfg.get("persona_1"), 2: cfg.get("persona_2")}
-    models = {1: cfg["model_1"], 2: cfg["model_2"]}
+    singers = range(1, len(cfg["models"]) + 1)
+    names = dict(zip(singers, cfg["personas"]))
+    models = dict(zip(singers, cfg["models"]))
 
     def who(s: int) -> str:
         if blind:
@@ -327,9 +362,9 @@ def render_sheet(result: dict, spec: SongSpec | None = None, blind: bool = False
     out = []
     if not blind:
         out.append(f"# Parody of \"{spec.title}\"\n")
-        out.append(f"- {who(1)}\n- {who(2)}")
-        out.append(f"- Mode: {cfg['mode']} · Names: {cfg['names']} · Chorus: {cfg['chorus']} · "
-                   f"Track: {cfg['track']}\n")
+        out.append("\n".join(f"- {who(s)}" for s in singers))
+        out.append(f"- Scenario: {result['scenario_snapshot']['id']} · Names: {cfg['names']} · "
+                   f"Chorus: {cfg['chorus']} · Track: {cfg['track']}\n")
         if result.get("reference_lyrics"):
             out.append("- Original lyrics supplied as a style reference\n")
     for key in spec.performance_order:
@@ -338,9 +373,9 @@ def render_sheet(result: dict, spec: SongSpec | None = None, blind: bool = False
         lines = part.get("lines", [])
         if sec.is_chorus:
             author = part.get("author")
-            by = {"fixed": "given", "original": "original", 1: "written by Singer 1",
-                  2: "written by Singer 2"}.get(author, "")
-            head = f"## {sec.label} (both{', ' + by if by and not blind else ''})"
+            by = ({"fixed": "given", "original": "original"}.get(author) if isinstance(author, str)
+                  else f"written by Singer {author}" if author else "")
+            head = f"## {sec.label} ({group_label(sec.sung_by, spec.singers)}{', ' + by if by and not blind else ''})"
         elif sec.is_trade:
             head = f"## {sec.label}"
             lines = [f"**Singer {s}:** {l}" if blind or not names[s] else f"**{names[s]}:** {l}"
@@ -355,8 +390,7 @@ def render_sheet(result: dict, spec: SongSpec | None = None, blind: bool = False
     if show_scores and not blind:
         sc = result["scores"]
         rows = ["| Singer | Model | Adherence | First-try pass | Retries |", "|---|---|---|---|---|"]
-        for s in ("1", "2"):
-            b = sc["by_singer"][s]
+        for s, b in sc["by_singer"].items():
             adh = f"{b['adherence']:.0%}" if b["adherence"] is not None else "–"
             ftp = f"{b['first_try_pass_rate']:.0%}" if b["first_try_pass_rate"] is not None else "–"
             rows.append(f"| {s} | {b['model']} | {adh} | {ftp} | {b['retries']} |")

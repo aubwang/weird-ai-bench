@@ -3,6 +3,7 @@
 id: two_voices
 title: Two Voices (example)
 artist: songbench
+singers: 2
 generation_order: [refrain, opening, exchange, ending]
 performance_order: [opening, refrain, exchange, refrain, ending]
 sections:
