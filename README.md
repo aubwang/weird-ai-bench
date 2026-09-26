@@ -38,6 +38,7 @@ The turn order follows the selected spec. The example has a refrain, an opening,
 | `--chorus` | `auto` (default), `fixed`, `original`, or a singer number | Auto uses a preset chorus if supplied, otherwise the chorus's first singer writes it. Original uses the song YAML's source chorus |
 | `--preset` | bundled ID or YAML path; repeatable | Supplies prewritten sections of any kind, separately from the song template |
 | `--track` | `strict` (default), `freeform` | Strict sends failed checks back for a rewrite (up to `--retries`, default 3). Freeform is one shot, and the checks are only scored |
+| `--guidance` | `full` (default), `none` | None leaves the song map (syllables, stress, rhyme, pacing notes) out of the prompts: the singers get only the reference lyrics, the line counts, and the output format. Needs `--track freeform`. The checks still score the result |
 | `--gates` | any of `structure,syllables,stress,split,rhyme,internal_rhyme` | Which checks must pass on the strict track |
 | `--tolerance` | integer | Allowed syllable miss per line (default 0) |
 | `--effort`, `--temperature`, `--seed`, `--max-tokens` | | Passed to the model |
@@ -115,6 +116,8 @@ ad-lib. Keep ad-libs on the associated lyric line, not as extra section lines.
 
 The prompts are identical across the two tracks, so any difference between a model's strict and freeform songs comes from the feedback loop alone.
 
+`--guidance none` tests whether a model can hear the song rather than follow a spec. Compare a model's freeform songs with and without guidance: a small gap means it picks up the meter and rhyme scheme from the original lyrics on its own. Unguided runs are one shot, because retry feedback would name the failed checks and give the song map back. They need a template with reference lyrics.
+
 ## Check your own lyrics
 
 ```sh
@@ -139,7 +142,7 @@ The model ids above are examples; check [openrouter.ai/models](https://openroute
 
 `matrix` runs ordered lineups, one model per singer, so each model takes every role, and appends a row per song to `runs/matrix.csv` (per-singer columns are `;`-separated in singer order). `--include-self` lets one model fill several slots. Lineups grow fast with more singers, so `--max-lineups N` samples N of them while keeping each model spread evenly across the singer slots. Use `--dry-run` to list the jobs first. A song costs roughly 5 to 20 calls.
 
-`stats` reports, per model and track: line adherence, first-try pass rate per turn, final pass rate, and retries per song.
+`stats` reports, per model, track, and guidance: line adherence, first-try pass rate per turn, final pass rate, and retries per song.
 
 `leaderboard` compares songs written under the same settings, two at a time. Each pair is judged twice with the order swapped, and a disagreement counts as a tie, which cancels position bias. Results are fitted with an additive Bradley-Terry model: a song's strength is the sum of its singers' model strengths, which is what lets a benchmark of shared songs rank individual models. Judgments are cached in `judgments.jsonl`, so re-running only pays for new pairs.
 
@@ -151,7 +154,7 @@ Rubric criteria (1 to 10): singability, humor, parody craft, coherence, and inte
 
 - **Syllables and stress** come from the CMU Pronouncing Dictionary. When a word has several pronunciations ("every," "fire"), any combination that fits counts. Stressed beats must land on a stressed syllable, or on a one-syllable content word. Words like "the," "a," "of," and "and" always fail.
 - **Words dictionaries miss** are handled first: dropped g's ("nothin'"), acronyms sung letter by letter (RL, AGI, D-O-I, GPUs), numbers, hyphenated compounds, and AI names. Anything else is estimated from spelling and listed under "guessed."
-- **Rhyme** compares sounds from the last stressed vowel onward. A full rhyme is an exact match. A slant rhyme is the same stressed vowel, or a shared unstressed ending like "-in'." Two-syllable rhymes need both vowels to match.
+- **Rhyme** compares sounds from the last stressed vowel onward. A full rhyme is an exact match. A slant rhyme is the same stressed vowel, or a shared unstressed ending like "-in'." Two-syllable rhymes need both vowels to match. Two sung habits also count as slant. A trailing pronoun can join the word before it ("show me" / "lonely"). An unstressed last syllable can take the rhyme when it's sung hard ("confident" / "tent"). That second one never satisfies a two-syllable rhyme. Slant rhymes score the same as full ones. Two words that sound the same from the start of the stressed syllable ("certain" / "uncertain", "right" / "write") fail the check and score 10%; repeating the same word scores 0.
 - **Split lines** (7+5) need a comma or dash exactly at the split.
 - **Internal rhyme** needs two words in the line to rhyme, or to share a stressed vowel and the consonant after it ("team / dream").
 - Models are asked to write only lyrics inside `<lyrics>` tags. Line numbers, `[10]`-style counts, and bold are stripped anyway, and self-reported counts are never trusted.

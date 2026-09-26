@@ -26,6 +26,43 @@ def test_full_slant_and_identical_rhyme():
     assert rhyme_level(word_info("crazy"), word_info("shady"), 2) == "slant"
     assert rhyme_level(word_info("help"), word_info("help")) == "identical"
     assert rhyme_level(word_info("house"), word_info("dog")) == "none"
+    for a, b in [("light", "delight"), ("certain", "uncertain"), ("view", "review"), ("right", "write")]:
+        assert rhyme_level(word_info(a), word_info(b)) == "same_sound", (a, b)
+    for a, b in [("ride", "pride"), ("all", "ball"), ("rain", "brain"), ("sent", "present")]:
+        assert rhyme_level(word_info(a), word_info(b)) == "full", (a, b)
+
+
+def test_slant_scores_fully_and_same_sound_scores_a_little():
+    sec = SectionSpec("couplet", "Couplet", [LineSpec(4, rhyme="A"), LineSpec(4, rhyme="A")],
+                      {"A": RhymeSpec()}, singer=1)
+    slant = verify_section(["The sky is bright", "We say goodbye"], sec)
+    assert slant.lines[1].rhyme_level == "slant" and slant.scores()["rhyme"] == 1
+    same = verify_section(["We saw the light", "Oh what delight"], sec)
+    assert not same.gate("rhyme") and "sounds the same as" in same.rhyme_errors[0]
+    assert abs(same.scores()["rhyme"] - 0.1) < 1e-9
+
+
+def test_repeating_an_earlier_sound_is_caught_past_the_anchor():
+    sec = SectionSpec("tercet", "Tercet", [LineSpec(4, rhyme="A")] * 3, {"A": RhymeSpec()}, singer=1)
+    rep = verify_section(["We saw the light", "We sang all night", "Oh what delight"], sec)
+    assert [l.rhyme_ok for l in rep.lines] == [True, True, False]
+    assert rep.lines[2].rhyme_level == "same_sound" and rep.lines[2].rhyme_with == 1
+    assert rep.rhyme_errors == ["Line 3 ends on 'delight', which sounds the same as line 1's "
+                                "'light'. Lines 1, 2, 3 need a rhyme."]
+
+
+def test_wrenched_rhyme_on_a_sung_last_syllable():
+    assert rhyme_level(word_info("confident"), word_info("tent")) == "slant"
+    assert rhyme_level(word_info("button"), word_info("cat")) == "none"
+    # A one-syllable effect never satisfies a two-syllable rhyme.
+    assert rhyme_level(word_info("confident"), word_info("tent"), 2) == "none"
+
+
+def test_mosaic_rhyme_with_a_trailing_pronoun():
+    sec = SectionSpec("couplet", "Couplet", [LineSpec(5, rhyme="A"), LineSpec(5, rhyme="A")],
+                      {"A": RhymeSpec(min_syllables=2)}, singer=1)
+    assert verify_section(["The night was lonely", "Come on and show me"], sec).gate("rhyme")
+    assert not verify_section(["The night was lonely", "Come on and hold it"], sec).gate("rhyme")
 
 
 def test_rhyme_groups_and_missing_lines():

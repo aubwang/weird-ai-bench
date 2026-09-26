@@ -18,11 +18,12 @@ from .prompts import (
 )
 from .scenario import Scenario, load_scenario, scenario_from_dict
 from .spec import SongSpec, format_lyric, group_label, load_preset, load_spec, result_spec
-from .verify import GATES, LineReport, SectionReport, originality, verify_section
+from .verify import GATES, LineReport, SectionReport, originality, rhyme_credit, verify_section
 
 NAMES = ("real", "assigned", "anonymous")
 CHORUS = ("auto", "fixed", "original")  # or a singer number, who writes it
 TRACKS = ("strict", "freeform")
+GUIDANCE = ("full", "none")  # none: no song map in the prompts, only the reference lyrics
 
 
 class ConfigError(ValueError):
@@ -38,6 +39,7 @@ class RunConfig:
     chorus: str = "auto"
     presets: list[str] = field(default_factory=list)
     track: str = "strict"
+    guidance: str = "full"
     max_retries: int = 3
     tolerance: int = 0
     gates: list[str] = field(default_factory=lambda: list(GATES))
@@ -49,9 +51,13 @@ class RunConfig:
     def validate(self, spec: SongSpec | None = None, scenario: Scenario | None = None) -> None:
         """Check the settings; with a spec and scenario, also check they fit this song."""
         self.chorus = str(self.chorus)
-        for name, val, allowed in (("names", self.names, NAMES), ("track", self.track, TRACKS)):
+        for name, val, allowed in (("names", self.names, NAMES), ("track", self.track, TRACKS),
+                                   ("guidance", self.guidance, GUIDANCE)):
             if val not in allowed:
                 raise ConfigError(f"{name} must be one of {', '.join(allowed)}; got {val!r}")
+        if self.guidance == "none" and self.track != "freeform":
+            # Retry feedback names the failed checks, which would hand back the song map.
+            raise ConfigError("guidance=none is one-shot; use --track freeform.")
         if self.chorus not in CHORUS and not self.chorus.isdigit():
             raise ConfigError(f"chorus must be one of {', '.join(CHORUS)} or a singer number; "
                               f"got {self.chorus!r}")
@@ -94,7 +100,10 @@ def line_score(l: LineReport) -> float:
     checks = [1.0 if l.syllables_ok else 0.0]
     if l.stress_required:
         checks.append(l.stress_hits / l.stress_required)
-    for v in (l.rhyme_ok, l.split_ok, l.internal_ok, l.hook_ok):
+    rhyme = rhyme_credit(l)
+    if rhyme is not None:
+        checks.append(rhyme)
+    for v in (l.split_ok, l.internal_ok, l.hook_ok):
         if v is not None:
             checks.append(1.0 if v else 0.0)
     return sum(checks) / len(checks)
@@ -114,6 +123,9 @@ class Song:
         self.ov = self.spec.syllable_overrides
         self.log = log or (lambda msg: None)
         self.reference_text = self.spec.reference_text()
+        if cfg.guidance == "none" and self.reference_text is None:
+            raise ConfigError(f"guidance=none needs reference lyrics in {self.spec.id}; "
+                              f"without them the singers have nothing to go on.")
         self.singers = range(1, self.spec.singers + 1)
         self.threads = {
             s: [{"role": "system", "content": system_prompt(
@@ -256,7 +268,7 @@ class Song:
                 singer = int(cfg.chorus)
                 self.log(f"{sec.label}: {label(cfg, singer)} writes it")
                 so_far = render_song_so_far(spec, cfg, self.written, self.authors)
-                self._write_section(key, singer, chorus_task(spec, sec, so_far))
+                self._write_section(key, singer, chorus_task(spec, cfg, sec, so_far))
             elif sec.is_trade:
                 self.log(f"{sec.label}: trading lines")
                 self._write_trade(key)
@@ -335,7 +347,8 @@ def _slug(s: str) -> str:
 def _run_id(cfg: RunConfig, scenario_id: str) -> str:
     ts = datetime.now().strftime("%Y%m%d-%H%M%S")
     cast = "-x-".join(_slug(display_name(m))[:24] for m in cfg.models)
-    return (f"{ts}-{cast}-{_slug(scenario_id)}-{cfg.names}-{cfg.chorus}-{cfg.track}-"
+    blind = "-unguided" if cfg.guidance == "none" else ""
+    return (f"{ts}-{cast}-{_slug(scenario_id)}-{cfg.names}-{cfg.chorus}-{cfg.track}{blind}-"
             f"{uuid.uuid4().hex[:4]}")
 
 
@@ -364,7 +377,8 @@ def render_sheet(result: dict, spec: SongSpec | None = None, blind: bool = False
         out.append(f"# Parody of \"{spec.title}\"\n")
         out.append("\n".join(f"- {who(s)}" for s in singers))
         out.append(f"- Scenario: {result['scenario_snapshot']['id']} · Names: {cfg['names']} · "
-                   f"Chorus: {cfg['chorus']} · Track: {cfg['track']}\n")
+                   f"Chorus: {cfg['chorus']} · Track: {cfg['track']}"
+                   + (" · Guidance: none" if cfg.get("guidance") == "none" else "") + "\n")
         if result.get("reference_lyrics"):
             out.append("- Original lyrics supplied as a style reference\n")
     for key in spec.performance_order:

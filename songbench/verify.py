@@ -10,6 +10,10 @@ from .spec import LineSpec, SectionSpec
 
 GATES = ("structure", "syllables", "stress", "split", "rhyme", "internal_rhyme")
 
+# Unstressed words that lean on the word before them at a line end, so the pair
+# rhymes as one: "show me" / "lonely".
+_ENCLITICS = {"me", "you", "ya", "him", "her", "it", "them", "'em", "us"}
+
 # Words that never count toward an internal rhyme (too trivial).
 _TRIVIAL = {"i", "my", "me", "you", "we", "he", "she", "it", "they", "a", "the", "so", "oh"}
 
@@ -129,15 +133,92 @@ def _final_unstressed_tail(p: Pron) -> tuple[str, ...] | None:
     return tuple(ph.rstrip("012") for ph in p.phones[vi[-1]:])
 
 
+def _wrenched(a: Pron, b: Pron) -> bool:
+    """Same final consonants, where singing stresses an unstressed last syllable:
+    "confident" / "tent". The unstressed vowel must be a reduced one (uh, ih)."""
+    if a.guessed or b.guessed:
+        return False
+    tails = []
+    for p in (a, b):
+        vi = [i for i, ph in enumerate(p.phones) if ph.rstrip("012") in VOWELS]
+        if not vi:
+            return False
+        v = p.phones[vi[-1]]
+        tails.append((v.rstrip("012"), v[-1] == "0", tuple(ph.rstrip("012") for ph in p.phones[vi[-1] + 1:])))
+    (va, ua, ca), (vb, ub, cb) = tails
+    if not ca or ca != cb or not (ua or ub):
+        return False
+    return va == vb or (ua and va in ("AH", "IH")) or (ub and vb in ("AH", "IH"))
+
+
+def _joined(prev: WordInfo, last: WordInfo) -> WordInfo:
+    """The last two words as one, the second unstressed: "show me" -> SHOW-mee."""
+    prons = []
+    for p1 in prev.prons:
+        for p2 in last.prons:
+            if p1.guessed or p2.guessed:
+                continue
+            weak = tuple(ph[:-1] + "0" if ph[-1] in "12" else ph for ph in p2.phones)
+            prons.append(Pron(p1.phones + weak, p1.stresses + (0,) * p2.syllables))
+    return WordInfo(text=f"{prev.text} {last.text}", norm=f"{prev.norm} {last.norm}",
+                    prons=prons, weak=False, guessed=False)
+
+
 def _last_vowel(part: tuple[str, ...]) -> str | None:
     vs = [p for p in part if p in VOWELS]
     return vs[-1] if vs else None
 
 
 def rhyme_level(a: WordInfo, b: WordInfo, min_syllables: int = 1) -> str:
-    """'full', 'slant', 'identical', or 'none'."""
+    """'full', 'slant', 'same_sound', 'identical', or 'none'.
+
+    'same_sound' is a full rhyme whose stressed syllable also starts with the same
+    consonants, so it's really one sound: "certain" / "uncertain", "right" / "write".
+    """
     if a.norm == b.norm:
         return "identical"
+    lv = _sound_level(a, b, min_syllables)
+    if lv == "full" and _same_onset(a, b):
+        return "same_sound"
+    return lv
+
+
+# Consonant clusters that can start an English syllable, beyond single consonants.
+_ONSETS = ({(c, g) for c in "P B T D K G F V TH SH".split() for g in "L R W Y".split()}
+           | {("S", c) for c in "P T K M N L W F".split()}
+           | {("S", "P", "R"), ("S", "T", "R"), ("S", "K", "R"), ("S", "P", "L"),
+              ("S", "K", "W"), ("S", "P", "Y"), ("S", "K", "Y")})
+
+
+def _onset(phones: tuple[str, ...], v: int) -> tuple[str, ...]:
+    """Consonants that start the syllable whose vowel is at index v."""
+    i = v
+    while i > 0 and phones[i - 1] not in VOWELS:
+        i -= 1
+    cluster = phones[i:v]
+    if i == 0 or len(cluster) <= 1:
+        return cluster
+    for n in (3, 2):
+        if len(cluster) >= n and cluster[-n:] in _ONSETS:
+            return cluster[-n:]
+    return cluster[-1:]
+
+
+def _same_onset(a: WordInfo, b: WordInfo) -> bool:
+    for pa in a.prons:
+        for pb in b.prons:
+            if pa.guessed or pb.guessed:
+                continue
+            fa, fb = (tuple(x.rstrip("012") for x in p.phones) for p in (pa, pb))
+            for ra in pa.rhyme_parts():
+                if ra in pb.rhyme_parts():
+                    va, vb = len(fa) - len(ra), len(fb) - len(ra)
+                    if _onset(fa, va) == _onset(fb, vb):
+                        return True
+    return False
+
+
+def _sound_level(a: WordInfo, b: WordInfo, min_syllables: int) -> str:
     best = "none"
     for pa in a.prons:
         for pb in b.prons:
@@ -161,10 +242,22 @@ def rhyme_level(a: WordInfo, b: WordInfo, min_syllables: int = 1) -> str:
             ta, tb = _final_unstressed_tail(pa), _final_unstressed_tail(pb)
             if ta and ta == tb and len(ta) > 1:
                 best = "slant"
+            elif min_syllables < 2 and _wrenched(pa, pb):
+                best = "slant"
     return best
 
 
-_RANK = {"full": 2, "slant": 1, "none": 0, "identical": 0}
+_RANK = {"full": 2, "slant": 1, "none": 0, "same_sound": 0, "identical": 0}
+
+
+def rhyme_credit(l: LineReport) -> float | None:
+    """Score for a line's end rhyme. Slant counts fully, since the gate accepts it;
+    the same sound ("certain" / "uncertain") gets a little."""
+    if l.rhyme_ok is None:
+        return None
+    if l.rhyme_ok:
+        return 1.0
+    return 0.1 if l.rhyme_level == "same_sound" else 0.0
 
 
 def _norm_text(s: str) -> str:
@@ -245,8 +338,7 @@ class SectionReport:
             s["stress"] = sum(l.stress_hits for l in ls) / req
         rl = [l for l in ls if l.rhyme_ok is not None]
         if rl:
-            pts = sum(1.0 if l.rhyme_level == "full" else 0.75 if l.rhyme_ok else 0.0 for l in rl)
-            s["rhyme"] = pts / len(rl)
+            s["rhyme"] = sum(rhyme_credit(l) for l in rl) / len(rl)
         sp = [l for l in ls if l.split_ok is not None]
         if sp:
             s["split"] = sum(bool(l.split_ok) for l in sp) / len(sp)
@@ -293,10 +385,14 @@ def verify_section(lines: list[str], sec: SectionSpec, overrides: dict | None = 
                     f"Line {lr.index} must end with the hook (\"{strip_adlibs(hook_text)}\").")
 
     # Rhyme groups.
-    words = {}
+    words, ends = {}, {}
     for lr in rep.lines:
         toks = tokenize(lr.text, overrides)
         words[lr.index] = toks[-1].info if toks else None
+        # Rhyme candidates: the last word, and with an enclitic, the last two words.
+        ends[lr.index] = [t.info for t in toks[-1:]]
+        if len(toks) > 1 and toks[-1].info.norm in _ENCLITICS:
+            ends[lr.index].append(_joined(toks[-2].info, toks[-1].info))
     groups: dict[str, list[LineReport]] = {}
     for lr, ls in zip(rep.lines, specs):
         if ls.rhyme and not ls.repeats_hook:
@@ -311,10 +407,14 @@ def verify_section(lines: list[str], sec: SectionSpec, overrides: dict | None = 
             continue  # nothing to rhyme with yet (e.g. first bridge line)
 
         def level(a, b):
-            wa, wb = words.get(a.index), words.get(b.index)
-            if not wa or not wb:
+            levels = [rhyme_level(wa, wb, min_syl)
+                      for wa in ends.get(a.index, []) for wb in ends.get(b.index, [])]
+            if not levels:
                 return "none"
-            return rhyme_level(wa, wb, min_syl)
+            best = max(levels, key=lambda x: _RANK[x])
+            if _RANK[best] == 0:
+                best = next((x for x in ("same_sound", "identical") if x in levels), best)
+            return best
 
         # Anchor: the line that rhymes with the most others.
         best_anchor, best_n = members[0], -1
@@ -331,19 +431,27 @@ def verify_section(lines: list[str], sec: SectionSpec, overrides: dict | None = 
                 lv = level(best_anchor, m)
                 m.rhyme_level, m.rhyme_with = lv, best_anchor.index
             m.rhyme_ok = _RANK[m.rhyme_level] >= need
+        # A line that only repeats an earlier line's sound is weak, whatever the anchor says.
+        for i, m in enumerate(members):
+            if m.rhyme_ok:
+                for e in members[:i]:
+                    lv = level(e, m)
+                    if lv in ("same_sound", "identical"):
+                        m.rhyme_level, m.rhyme_with, m.rhyme_ok = lv, e.index, False
+                        break
         bad = [m for m in members if not m.rhyme_ok]
         if bad:
-            aw = words.get(best_anchor.index)
             kind = "a two-syllable rhyme" if min_syl >= 2 else "a rhyme"
             kind += "" if need == 1 else " (full rhyme required)"
             for m in bad:
-                w = words.get(m.index)
-                why = "repeats the same word" if m.rhyme_level == "identical" else "doesn't rhyme"
-                if m is best_anchor:
+                if m.rhyme_with is None:
                     continue  # if the anchor fails, every other line fails too and is reported
+                w, ow = words.get(m.index), words.get(m.rhyme_with)
+                why = {"identical": "repeats the same word as",
+                       "same_sound": "sounds the same as"}.get(m.rhyme_level, "doesn't rhyme with")
                 rep.rhyme_errors.append(
-                    f"Line {m.index} ends on '{w.text if w else ''}', which {why} with "
-                    f"line {best_anchor.index}'s '{aw.text if aw else ''}'. Lines "
+                    f"Line {m.index} ends on '{w.text if w else ''}', which {why} "
+                    f"line {m.rhyme_with}'s '{ow.text if ow else ''}'. Lines "
                     f"{', '.join(str(x.index) for x in members)} need {kind}.")
     return rep
 
