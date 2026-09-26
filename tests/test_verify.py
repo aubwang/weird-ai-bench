@@ -102,3 +102,11 @@ def test_adlibs_excluded_from_all_line_checks():
     assert analyze_line("(This is sung)", LineSpec(3)).count == 3
     assert not internal_rhyme("The model is broken <adlib>team dream</adlib>")
     assert not analyze_line("The sky <adlib>,</adlib> is bright", LineSpec(4, split=[2, 2])).split_ok
+
+
+def test_wrong_count_is_charged_once():
+    sec = SectionSpec("couplet", "Couplet", [LineSpec(4, [2, 4]), LineSpec(4, [2, 4], split=[2, 2])],
+                      {}, singer=1)
+    rep = verify_section(["The sky is bright", "The sky is very bright"], sec)
+    s = rep.scores()
+    assert s["syllables"] == 0.5 and s["stress"] == 1 and "split" not in s

@@ -333,13 +333,16 @@ class SectionReport:
         n = max(self.expected_lines, 1)
         ls = self.lines
         s: dict[str, float] = {"syllables": sum(l.syllables_ok for l in ls) / n}
-        req = sum(l.stress_required for l in ls)
+        # Stress and splits depend on the count, so lines with the wrong count skip them
+        # rather than lose points a second time.
+        counted = [l for l in ls if l.syllables_ok]
+        req = sum(l.stress_required for l in counted)
         if req:
-            s["stress"] = sum(l.stress_hits for l in ls) / req
+            s["stress"] = sum(l.stress_hits for l in counted) / req
         rl = [l for l in ls if l.rhyme_ok is not None]
         if rl:
             s["rhyme"] = sum(rhyme_credit(l) for l in rl) / len(rl)
-        sp = [l for l in ls if l.split_ok is not None]
+        sp = [l for l in counted if l.split_ok is not None]
         if sp:
             s["split"] = sum(bool(l.split_ok) for l in sp) / len(sp)
         ir = [l for l in ls if l.internal_ok is not None]

@@ -232,11 +232,13 @@ def cmd_check(args) -> int:
         print(f"== {sec.label} ==")
         for l in rep.lines:
             marks = [f"{l.count}/{l.target} syl" + ("" if l.syllables_ok else " ✗")]
-            if l.stress_required:
+            if l.stress_required and not l.syllables_ok:
+                marks.append("stress n/a")
+            elif l.stress_required:
                 marks.append(f"stress {l.stress_hits}/{l.stress_required}" + ("" if l.stress_ok else " ✗"))
             if l.rhyme_ok is not None:
                 marks.append(f"rhyme {l.rhyme_group}: {l.rhyme_level}" + ("" if l.rhyme_ok else " ✗"))
-            if l.split_ok is not None:
+            if l.split_ok is not None and l.syllables_ok:
                 marks.append("split ok" if l.split_ok else "split ✗")
             if l.internal_ok is not None:
                 marks.append("internal rhyme ok" if l.internal_ok else "internal rhyme ✗")
