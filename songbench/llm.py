@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 import httpx
 
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
+DEFAULT_MAX_TOKENS = 32000  # reasoning models can spend 8k+ thinking before they write a line
 
 
 def _endpoint(base: str | None) -> str:
@@ -36,10 +37,10 @@ class LLMError(RuntimeError):
 class OpenRouterClient:
     api_key: str | None = None
     temperature: float | None = None
-    max_tokens: int = 8000
+    max_tokens: int = DEFAULT_MAX_TOKENS
     effort: str | None = None  # reasoning effort, for models that support it
     seed: int | None = None
-    timeout_s: float = 300.0
+    timeout_s: float = 600.0  # long reasoning turns can run past 5 minutes
     retries: int = 4
     _http: httpx.Client | None = field(default=None, repr=False)
 

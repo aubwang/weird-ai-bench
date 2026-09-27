@@ -41,7 +41,8 @@ The turn order follows the selected spec. The example has a refrain, an opening,
 | `--guidance` | `full` (default), `none` | None leaves the song map (syllables, stress, rhyme, pacing notes) out of the prompts: the singers get only the reference lyrics, the line counts, and the output format. Needs `--track freeform`. The checks still score the result |
 | `--gates` | any of `structure,syllables,stress,split,rhyme,internal_rhyme` | Which checks must pass on the strict track |
 | `--tolerance` | integer | Allowed syllable miss per line (default 0) |
-| `--effort`, `--temperature`, `--seed`, `--max-tokens` | | Passed to the model |
+| `--effort`, `--temperature`, `--seed` | | Passed to the model |
+| `--max-tokens` | integer | Output token cap per call, including reasoning (default 32000). Reasoning models can use more than 8000 thinking before they answer |
 
 `anonymous` can't be combined with `each_other` (or any scenario with `requires_names`), since the first singer would have nothing specific to answer.
 
