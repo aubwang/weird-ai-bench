@@ -44,7 +44,7 @@ originality report. Leave `reference` out if no reference should be supplied.
 | Field | Meaning |
 |---|---|
 | `syllables: 8` | Required main-line syllable count |
-| `slack: 2` | Syllables either side of the target that still fit, for looser stretches of melody; prompts show the range |
+| `slack: 2` | Syllables either side of the target that still fit, for looser stretches of melody; prompts show the range. `slack: [0, 2]` sets fewer and more separately |
 | `stress: [2, 4]` | Required strong beats, counted from 1 |
 | `split: [4, 4]` | Pause at the syllable boundary between the two halves |
 | `rhyme: A` | End word belongs to group A within this section |

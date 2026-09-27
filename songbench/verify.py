@@ -6,9 +6,13 @@ import re
 from dataclasses import asdict, dataclass, field
 
 from .phonetics import VOWELS, Pron, Token, WordInfo, strip_adlibs, tokenize
-from .spec import LineSpec, SectionSpec
+from .spec import LineSpec, SectionSpec, slack_bounds
 
 GATES = ("structure", "syllables", "stress", "split", "rhyme", "internal_rhyme")
+
+# Bump when a rule change can move a saved run's scores; `songbench rescore`
+# brings old runs up to date. Runs saved without a version count as 1.
+SCORING_VERSION = 2
 
 # Unstressed words that lean on the word before them at a line end, so the pair
 # rhymes as one: "show me" / "lonely".
@@ -37,7 +41,8 @@ class LineReport:
     count_min: int | None = None
     count_max: int | None = None
     syllables_ok: bool = False
-    slack: int = 0  # allowed miss either side of the target
+    under: int = 0  # syllables under the target that still pass
+    over: int = 0  # syllables over the target that still pass
     stress_required: int = 0
     stress_hits: int = 0
     stress_issues: list[str] = field(default_factory=list)
@@ -100,8 +105,9 @@ def analyze_line(text: str, spec: LineSpec, overrides: dict | None = None,
 
     (pos, hit), (viol, path) = min(states.items(), key=rank)
     rep.count = pos
-    rep.slack = max(tolerance, spec.slack)
-    rep.syllables_ok = abs(pos - spec.syllables) <= rep.slack
+    fewer, more = slack_bounds(spec)
+    rep.under, rep.over = max(tolerance, fewer), max(tolerance, more)
+    rep.syllables_ok = -rep.under <= pos - spec.syllables <= rep.over
     if split_at is not None:
         rep.split_ok = hit and rep.syllables_ok
     rep.stress_required = len(required)
@@ -319,7 +325,8 @@ class SectionReport:
         for l in self.lines:
             n = f"Line {l.index}"
             if "syllables" in gates and not l.syllables_ok:
-                need = f"{max(l.target - l.slack, 1)} to {l.target + l.slack}" if l.slack else str(l.target)
+                need = (f"{max(l.target - l.under, 1)} to {l.target + l.over}"
+                        if l.under or l.over else str(l.target))
                 out.append(f"{n} (\"{l.text}\") has {l.count} syllables; it needs {need}.")
             if "stress" in gates and l.syllables_ok and not l.stress_ok:
                 out.append(f"{n} (\"{l.text}\"): " + "; ".join(l.stress_issues) + ".")

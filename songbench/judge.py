@@ -79,6 +79,13 @@ def _extract_json(text: str) -> dict:
     return json.loads(m.group(0))
 
 
+def blend_singability(scores: dict, adherence: dict[str, float]) -> None:
+    """Average the judge's singability with the automated meter score, in place."""
+    if adherence and "singability" in scores:
+        meter = sum(adherence.values()) / len(adherence)
+        scores["singability_blended"] = round(0.5 * scores["singability"] + 5.0 * meter, 2)
+
+
 def rubric(result: dict, client, judge_model: str) -> dict:
     crit = criteria(result)
     sheet = render_sheet(result, blind=True, show_scores=False)
@@ -92,10 +99,7 @@ def rubric(result: dict, client, judge_model: str) -> dict:
     comp = client.complete(judge_model, [{"role": "user", "content": prompt}])
     data = _extract_json(comp.text)
     scores = {k: float(data[k]) for k in crit if k in data}
-    gen = result["scores"]["adherence"]
-    if gen and "singability" in scores:
-        meter = sum(gen.values()) / len(gen)
-        scores["singability_blended"] = round(0.5 * scores["singability"] + 5.0 * meter, 2)
+    blend_singability(scores, result["scores"]["adherence"])
     main = [scores[k] for k in crit if k in scores]
     scores["overall"] = round(sum(main) / len(main), 2) if main else None
     out = {"judge_model": judge_model, "scores": scores, "notes": data.get("notes", ""),

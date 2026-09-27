@@ -135,6 +135,7 @@ songbench matrix --models openai/gpt-5.1,anthropic/claude-sonnet-5,deepseek/deep
   --scenarios each_other,none --tracks strict,freeform --samples 2 --out runs/
 
 songbench stats runs/                                   # checks only, no judge calls
+songbench rescore runs/                                 # re-check saved runs after a rules change
 songbench leaderboard runs/ --judge google/gemini-3-pro # pairwise judging -> Elo
 songbench judge runs/*.json --judge google/gemini-3-pro # rubric scores per song
 ```
@@ -142,6 +143,8 @@ songbench judge runs/*.json --judge google/gemini-3-pro # rubric scores per song
 The model ids above are examples; check [openrouter.ai/models](https://openrouter.ai/models) for current ones.
 
 `matrix` runs ordered lineups, one model per singer, so each model takes every role, and appends a row per song to `runs/matrix.csv` (per-singer columns are `;`-separated in singer order). `--include-self` lets one model fill several slots. Lineups grow fast with more singers, so `--max-lineups N` samples N of them while keeping each model spread evenly across the singer slots. Use `--dry-run` to list the jobs first. A song costs roughly 5 to 20 calls.
+
+`rescore` re-parses and re-checks every saved attempt with the current rules, without calling a model, and rewrites the run files. Retries stay as they happened. `--spec` scores against a revised template of the same shape, such as one with new `slack`. Each run records the scoring rules it was checked under, and `stats` refuses to mix runs from different versions.
 
 `stats` reports, per model, track, and guidance: line adherence, first-try pass rate per turn, final pass rate, and retries per song.
 

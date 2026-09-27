@@ -22,7 +22,9 @@ class LineSpec:
     note: str | None = None
     reference: str | None = None
     adlibs: list[str] = field(default_factory=list)
-    slack: int = 0  # syllables either side of the target that still fit the melody
+    # Syllables under and over the target that still fit the melody: one number
+    # for both sides, or [fewer, more].
+    slack: int | list[int] = 0
 
 
 @dataclass
@@ -95,9 +97,16 @@ def _line(d: dict) -> LineSpec:
         raise ValueError("line reference must be text")
     _validate_adlibs(d.get("adlibs", []))
     slack = d.get("slack", 0)
-    if not isinstance(slack, int) or isinstance(slack, bool) or slack < 0:
-        raise ValueError("line slack must be a whole number, 0 or more")
+    parts = slack if isinstance(slack, list) and len(slack) == 2 else [slack]
+    if any(not isinstance(x, int) or isinstance(x, bool) or x < 0 for x in parts):
+        raise ValueError("line slack must be a whole number 0 or more, or [fewer, more]")
     return LineSpec(**d)
+
+
+def slack_bounds(ln: LineSpec) -> tuple[int, int]:
+    """How many syllables under and over the target still fit."""
+    s = ln.slack
+    return (s, s) if isinstance(s, int) else (s[0], s[1])
 
 
 def load_spec(path_or_id: str | Path = "two_voices") -> SongSpec:
@@ -267,8 +276,9 @@ def format_lyric(text: str, adlibs: list[str]) -> str:
 
 def describe_line(ln: LineSpec, idx: int, rhymes: dict[str, RhymeSpec]) -> str:
     """One-line human description of a line's constraints, used in prompts."""
+    fewer, more = slack_bounds(ln)
     parts = [f"{ln.syllables} syllables" + (
-        f" ({max(ln.syllables - ln.slack, 1)} to {ln.syllables + ln.slack} fits)" if ln.slack else "")]
+        f" ({max(ln.syllables - fewer, 1)} to {ln.syllables + more} fits)" if fewer or more else "")]
     if ln.split:
         parts.append(f"phrased {ln.split[0]} + {ln.split[1]} with a pause (comma or dash) after syllable {ln.split[0]}")
     if ln.stress:
@@ -326,7 +336,7 @@ def slack_hints(spec: SongSpec, min_lines: int = 3) -> list[str]:
                 continue
             diffs = {n: abs(x.syllables - y.syllables)
                      for n, (x, y) in enumerate(zip(a.lines, b.lines), 1)
-                     if x.syllables != y.syllables and not (x.slack or y.slack)}
+                     if x.syllables != y.syllables and not any(slack_bounds(x) + slack_bounds(y))}
             if diffs:
                 hints.append(
                     f"{a.label} and {b.label} differ by up to {max(diffs.values())} "
