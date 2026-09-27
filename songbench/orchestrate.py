@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import re
@@ -18,7 +19,9 @@ from .prompts import (
 )
 from .scenario import Scenario, load_scenario, scenario_from_dict
 from .spec import SongSpec, format_lyric, group_label, load_preset, load_spec, result_spec
-from .verify import GATES, LineReport, SectionReport, originality, rhyme_credit, verify_section
+from .verify import (
+    GATES, SCORING_VERSION, LineReport, SectionReport, originality, rhyme_credit, verify_section,
+)
 
 NAMES = ("real", "assigned", "anonymous")
 CHORUS = ("auto", "fixed", "original")  # or a singer number, who writes it
@@ -110,6 +113,90 @@ def line_score(l: LineReport) -> float:
     return sum(checks) / len(checks)
 
 
+def find_hook(spec: SongSpec, written: dict[str, list[str]]) -> str | None:
+    """The written hook line, once the section that establishes it exists."""
+    for key in spec.generation_order:
+        for ls, text in zip(spec.sections[key].lines, written.get(key, [])):
+            if ls.hook:
+                return text
+    return None
+
+
+def section_check(spec: SongSpec, key: str, hook: str | None, tolerance: int):
+    """The check for a whole-section turn: (lines, raw line count) -> report."""
+    sec = spec.sections[key]
+
+    def check(lines, _n):
+        return verify_section(lines, sec, spec.syllable_overrides, tolerance, hook=hook)
+    return check
+
+
+def trade_check(spec: SongSpec, key: str, idx: int, prev: list[str], hook: str | None,
+                tolerance: int):
+    """The check for one traded line, given the lines already written before it."""
+    sec = spec.sections[key]
+
+    def check(lines, n_raw):
+        full = verify_section(prev + lines, sec, spec.syllable_overrides, tolerance,
+                              upto=idx + 1, hook=hook)
+        rep = SectionReport(section=key, lines=full.lines[idx:idx + 1], expected_lines=1)
+        rep.structure_errors = [e for e in full.structure_errors if e.startswith(f"Line {idx + 1} ")]
+        if not lines:
+            rep.structure_errors.append("Write exactly one lyric line between the tags.")
+        elif n_raw > 1:
+            rep.structure_errors.append("Write exactly one line; you wrote several.")
+        rep.rhyme_errors = [e for e in full.rhyme_errors if e.startswith(f"Line {idx + 1} ")]
+        return rep
+    return check
+
+
+def score_song(spec: SongSpec, tolerance: int, models: list[str], written: dict[str, list[str]],
+               authors: dict[str, object], turns: list[dict],
+               reference_text: str | None) -> dict:
+    """Verification, scores, and originality for a finished song."""
+    hook = find_hook(spec, written)
+    singers = range(1, len(models) + 1)
+    verification = {}
+    line_scores: dict[int, list[float]] = {s: [] for s in singers}
+    for key in spec.generation_order:
+        sec = spec.sections[key]
+        rep = verify_section(written.get(key, []), sec, spec.syllable_overrides, tolerance, hook=hook)
+        verification[key] = rep.to_dict()
+        author = authors.get(key)
+        per_line = [line_score(l) for l in rep.lines] + [0.0] * (len(sec.lines) - len(rep.lines))
+        if isinstance(author, list):
+            for s, sc in zip(author, per_line):
+                line_scores[s].append(sc)
+        elif author in line_scores:
+            line_scores[author].extend(per_line)
+
+    by_singer = {}
+    for s in singers:
+        ts = [t for t in turns if t["singer"] == s]
+        by_singer[str(s)] = {
+            "model": models[s - 1],
+            "adherence": (sum(line_scores[s]) / len(line_scores[s])) if line_scores[s] else None,
+            "turns": len(ts),
+            "first_try_pass_rate": (sum(t["first_try_pass"] for t in ts) / len(ts)) if ts else None,
+            "final_pass_rate": (sum(t["final_pass"] for t in ts) / len(ts)) if ts else None,
+            "retries": sum(t["retries"] for t in ts),
+        }
+    generated = [k for k in spec.generation_order if authors.get(k) not in ("fixed", "original")]
+    out = {
+        "scoring_version": SCORING_VERSION,
+        "verification": verification,
+        "scores": {
+            "by_singer": by_singer,
+            "adherence": {k: verification[k]["scores"]["overall"] for k in generated},
+            "strict_pass": all(t["final_pass"] for t in turns),
+        },
+    }
+    if reference_text is not None:
+        gen_lines = [l for k in generated for l in written.get(k, [])]
+        out["originality"] = originality(gen_lines, reference_text)
+    return out
+
+
 class Song:
     def __init__(self, cfg: RunConfig, client, spec: SongSpec | None = None,
                  scenario: Scenario | None = None, log=None):
@@ -121,7 +208,6 @@ class Song:
         cfg.validate(self.spec, self.scenario)
         self.cfg = cfg
         self.client = client
-        self.ov = self.spec.syllable_overrides
         self.log = log or (lambda msg: None)
         self.reference_text = self.spec.reference_text()
         if cfg.guidance == "none" and self.reference_text is None:
@@ -216,19 +302,11 @@ class Song:
         return lines
 
     def _hook(self) -> str | None:
-        for key in self.spec.generation_order:
-            for ls, text in zip(self.spec.sections[key].lines, self.written.get(key, [])):
-                if ls.hook:
-                    return text
-        return None
+        return find_hook(self.spec, self.written)
 
     def _write_section(self, key: str, singer: int, task: str) -> None:
         sec = self.spec.sections[key]
-        hook = self._hook()
-
-        def check(lines, _n):
-            return verify_section(lines, sec, self.ov, self.cfg.tolerance, hook=hook)
-
+        check = section_check(self.spec, key, self._hook(), self.cfg.tolerance)
         self.written[key] = self._turn(singer, key, task, check, len(sec.lines))
         self.authors[key] = singer
 
@@ -239,20 +317,8 @@ class Song:
         for idx, singer in enumerate(sec.trade):
             so_far = render_song_so_far(self.spec, self.cfg, self.written, self.authors)
             task = trade_line_task(self.spec, self.cfg, sec, idx, so_far)
-            prev = list(self.written[key])
-
-            def check(lines, n_raw, idx=idx, prev=prev):
-                full = verify_section(prev + lines, sec, self.ov, self.cfg.tolerance,
-                                      upto=idx + 1, hook=self._hook())
-                rep = SectionReport(section=key, lines=full.lines[idx:idx + 1], expected_lines=1)
-                rep.structure_errors = [e for e in full.structure_errors if e.startswith(f"Line {idx + 1} ")]
-                if not lines:
-                    rep.structure_errors.append("Write exactly one lyric line between the tags.")
-                elif n_raw > 1:
-                    rep.structure_errors.append("Write exactly one line; you wrote several.")
-                rep.rhyme_errors = [e for e in full.rhyme_errors if e.startswith(f"Line {idx + 1} ")]
-                return rep
-
+            check = trade_check(self.spec, key, idx, list(self.written[key]), self._hook(),
+                                self.cfg.tolerance)
             lines = self._turn(singer, key, task, check, 1, single=True, line_index=idx)
             self.written[key].append(lines[0] if lines else "")
 
@@ -284,34 +350,6 @@ class Song:
 
     def _result(self, elapsed: float) -> dict:
         cfg, spec = self.cfg, self.spec
-        hook = self._hook()
-        verification = {}
-        line_scores: dict[int, list[float]] = {s: [] for s in self.singers}
-        for key in spec.generation_order:
-            sec = spec.sections[key]
-            lines = self.written.get(key, [])
-            rep = verify_section(lines, sec, self.ov, cfg.tolerance, hook=hook)
-            verification[key] = rep.to_dict()
-            author = self.authors.get(key)
-            per_line = [line_score(l) for l in rep.lines] + [0.0] * (len(sec.lines) - len(rep.lines))
-            if isinstance(author, list):
-                for s, sc in zip(author, per_line):
-                    line_scores[s].append(sc)
-            elif author in line_scores:
-                line_scores[author].extend(per_line)
-
-        by_singer = {}
-        for s in self.singers:
-            turns = [t for t in self.turns if t["singer"] == s]
-            by_singer[str(s)] = {
-                "model": self.model(s),
-                "adherence": (sum(line_scores[s]) / len(line_scores[s])) if line_scores[s] else None,
-                "turns": len(turns),
-                "first_try_pass_rate": (sum(t["first_try_pass"] for t in turns) / len(turns)) if turns else None,
-                "final_pass_rate": (sum(t["final_pass"] for t in turns) / len(turns)) if turns else None,
-                "retries": sum(t["retries"] for t in turns),
-            }
-        generated = [k for k in spec.generation_order if self.authors.get(k) not in ("fixed", "original")]
         result = {
             "version": 2,
             "id": _run_id(cfg, self.scenario.id),
@@ -320,25 +358,74 @@ class Song:
             "spec_snapshot": asdict(spec),
             "scenario_snapshot": asdict(self.scenario),
             "config": asdict(cfg),
-            "reference_lyrics": ({"sha256": hashlib.sha256(self.reference_text.encode("utf-8")).hexdigest()}
-                                 if self.reference_text is not None else None),
+            "reference_lyrics": _reference_hash(self.reference_text),
             "parts": {k: {"lines": self.written.get(k, []), "author": self.authors.get(k)}
                       for k in spec.generation_order},
-            "verification": verification,
-            "scores": {
-                "by_singer": by_singer,
-                "adherence": {k: verification[k]["scores"]["overall"] for k in generated},
-                "strict_pass": all(t["final_pass"] for t in self.turns),
-            },
             "turns": self.turns,
             "usage": {**self.usage, "elapsed_s": round(elapsed, 1)},
             "threads": {str(k): v for k, v in self.threads.items()},
         }
-        original_text = self.reference_text
-        if original_text is not None:
-            gen_lines = [l for k in generated for l in self.written.get(k, [])]
-            result["originality"] = originality(gen_lines, original_text)
+        result.update(score_song(spec, cfg.tolerance, cfg.models, self.written, self.authors,
+                                 self.turns, self.reference_text))
         return result
+
+
+def _reference_hash(text: str | None) -> dict | None:
+    return {"sha256": hashlib.sha256(text.encode("utf-8")).hexdigest()} if text is not None else None
+
+
+def rescore(result: dict, spec: SongSpec | None = None) -> dict:
+    """Re-check a saved run under the current parser and rules, without calling a model.
+
+    Every attempt is re-parsed from its raw response and re-checked, so pass rates
+    reflect today's rules; retries stay as they happened. Pass `spec` to score
+    against a revised template of the same shape; it replaces the run's snapshot.
+    """
+    result = copy.deepcopy(result)
+    old = result_spec(result)
+    if spec is not None:
+        shape = lambda sp: {k: len(sec.lines) for k, sec in sp.sections.items()}
+        if shape(spec) != shape(old) or spec.singers != old.singers:
+            raise ValueError(f"{spec.id} doesn't have the same sections and line counts as "
+                             f"the run's template {old.id}")
+        result["spec_snapshot"] = asdict(spec)
+        result["reference_lyrics"] = _reference_hash(spec.reference_text())
+    spec = spec or old
+    cfg = result["config"]
+    tolerance = cfg.get("tolerance", 0)
+    gates = cfg.get("gates") or list(GATES)
+    written = {k: list(p["lines"]) for k, p in result["parts"].items()
+               if p.get("author") in ("fixed", "original")}
+    authors = {k: p.get("author") for k, p in result["parts"].items()}
+    for t in result["turns"]:
+        key, idx = t["section"], t["line_index"]
+        hook = find_hook(spec, written)
+        if idx is None:
+            check = section_check(spec, key, hook, tolerance)
+        else:
+            check = trade_check(spec, key, idx, list(written.setdefault(key, [])), hook, tolerance)
+        for a in t["attempts"]:
+            raw = parse_lyrics(a["response"])
+            a["lines"] = raw[:1] if idx is not None else raw
+            rep = check(a["lines"], len(raw))
+            a["passed"], a["errors"], a["all_errors"] = (
+                rep.passed(gates), rep.errors(gates), rep.errors(GATES))
+        t["first_try_pass"] = t["attempts"][0]["passed"]
+        t["final_pass"] = t["attempts"][-1]["passed"]
+        final = t["attempts"][-1]["lines"]
+        if idx is None:
+            written[key] = final
+        else:
+            written[key].append(final[0] if final else "")
+    result["parts"] = {k: {"lines": written.get(k, []), "author": authors.get(k)}
+                       for k in spec.generation_order}
+    result.update(score_song(spec, tolerance, cfg["models"], written, authors, result["turns"],
+                             spec.reference_text()))
+    judge = result.get("judge")
+    if judge and "singability" in judge.get("scores", {}):
+        from .judge import blend_singability
+        blend_singability(judge["scores"], result["scores"]["adherence"])
+    return result
 
 
 def _slug(s: str) -> str:

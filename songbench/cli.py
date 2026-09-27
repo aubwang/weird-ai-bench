@@ -14,7 +14,7 @@ from pathlib import Path
 
 from .llm import DEFAULT_MAX_TOKENS, LLMError, OpenRouterClient
 from .orchestrate import (
-    CHORUS, GUIDANCE, NAMES, TRACKS, ConfigError, RunConfig, Song, render_sheet, save,
+    CHORUS, GUIDANCE, NAMES, TRACKS, ConfigError, RunConfig, Song, render_sheet, rescore, save,
 )
 from .prompts import chorus_task, render_song_so_far, section_task, trade_line_task
 from .scenario import bundled_scenarios, load_scenario
@@ -231,7 +231,8 @@ def cmd_check(args) -> int:
         rep = verify_section(lines, sec, spec.syllable_overrides, args.tolerance, hook=hook)
         print(f"== {sec.label} ==")
         for l in rep.lines:
-            marks = [f"{l.count}/{l.target}{f'±{l.slack}' if l.slack else ''} syl"
+            fits = f" ({max(l.target - l.under, 1)}-{l.target + l.over})" if l.under or l.over else ""
+            marks = [f"{l.count}/{l.target}{fits} syl"
                      + ("" if l.syllables_ok else " ✗")]
             if l.stress_required and not l.syllables_ok:
                 marks.append("stress n/a")
@@ -270,9 +271,48 @@ def cmd_judge(args) -> int:
     return 0
 
 
+def cmd_rescore(args) -> int:
+    from .leaderboard import load_runs
+    try:
+        spec = load_spec(args.spec) if args.spec else None
+    except (OSError, ValueError) as e:
+        _log(f"error: {e}")
+        return 2
+    runs = load_runs(args.paths)
+    if not runs:
+        _log("no runs found")
+        return 1
+    failed = 0
+    for r in runs:
+        path = Path(r.pop("_path"))
+        try:
+            new = rescore(r, spec)
+        except ValueError as e:
+            _log(f"{path.name}: {e}")
+            failed += 1
+            continue
+        path.write_text(json.dumps(new, indent=2))
+        path.with_suffix(".md").write_text(render_sheet(new))
+        change = "  ".join(
+            f"{b['model']} {_pct(r['scores']['by_singer'][s]['adherence'])}->{_pct(b['adherence'])}"
+            for s, b in new["scores"]["by_singer"].items())
+        print(f"{path.name}: {change}")
+    return 1 if failed else 0
+
+
+def _pct(v) -> str:
+    return "–" if v is None else f"{v:.0%}"
+
+
 def cmd_stats(args) -> int:
     from .leaderboard import gate_stats, load_runs
-    rows = gate_stats(load_runs(args.paths))
+    runs = load_runs(args.paths)
+    versions = sorted({r.get("scoring_version", 1) for r in runs})
+    if len(versions) > 1:
+        _log(f"error: these runs were scored under different rules (versions "
+             f"{', '.join(map(str, versions))}); run `songbench rescore` on them first")
+        return 2
+    rows = gate_stats(runs)
     if not rows:
         _log("no runs found")
         return 1
@@ -374,6 +414,12 @@ def main(argv=None) -> int:
     p.add_argument("--judge", required=True)
     p.add_argument("--max-tokens", type=int, default=DEFAULT_MAX_TOKENS)
     p.set_defaults(func=cmd_judge)
+
+    p = sub.add_parser("rescore", help="re-check saved runs under the current rules (no model calls)")
+    p.add_argument("paths", nargs="+", help="run files or directories")
+    p.add_argument("--spec", help="score against this revised template (same sections and line "
+                                  "counts); it replaces each run's snapshot")
+    p.set_defaults(func=cmd_rescore)
 
     p = sub.add_parser("stats", help="gate stats per model (no judge calls)")
     p.add_argument("paths", nargs="+", help="run files or directories")
