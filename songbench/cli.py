@@ -12,7 +12,7 @@ from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
-from .llm import LLMError, OpenRouterClient
+from .llm import DEFAULT_MAX_TOKENS, LLMError, OpenRouterClient
 from .orchestrate import (
     CHORUS, GUIDANCE, NAMES, TRACKS, ConfigError, RunConfig, Song, render_sheet, save,
 )
@@ -69,7 +69,7 @@ def _common(p: argparse.ArgumentParser, single: bool = True) -> None:
     p.add_argument("--effort", choices=["minimal", "low", "medium", "high"],
                    help="reasoning effort, for models that support it")
     p.add_argument("--seed", type=int)
-    p.add_argument("--max-tokens", type=int, default=8000)
+    p.add_argument("--max-tokens", type=int, default=DEFAULT_MAX_TOKENS)
     p.add_argument("--out", default="runs", help="directory for transcripts")
     p.add_argument("--judge", help="judge model id; scores each song after it's written")
 
@@ -372,7 +372,7 @@ def main(argv=None) -> int:
     p = sub.add_parser("judge", help="rubric-score saved runs")
     p.add_argument("runs", nargs="+")
     p.add_argument("--judge", required=True)
-    p.add_argument("--max-tokens", type=int, default=8000)
+    p.add_argument("--max-tokens", type=int, default=DEFAULT_MAX_TOKENS)
     p.set_defaults(func=cmd_judge)
 
     p = sub.add_parser("stats", help="gate stats per model (no judge calls)")
@@ -386,7 +386,7 @@ def main(argv=None) -> int:
     p.add_argument("--max-pairs", type=int, default=200)
     p.add_argument("--mix", action="store_true", help="compare across settings, not just within")
     p.add_argument("--seed", type=int)
-    p.add_argument("--max-tokens", type=int, default=8000)
+    p.add_argument("--max-tokens", type=int, default=DEFAULT_MAX_TOKENS)
     p.set_defaults(func=cmd_leaderboard)
 
     p = sub.add_parser("spec", help="show the song map")
