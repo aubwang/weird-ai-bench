@@ -7,14 +7,14 @@ import re
 
 from .llm import family
 from .orchestrate import render_sheet, result_scenario
-from .spec import result_spec, syllable_map
+from .spec import describe_internal_rhyme, result_spec, syllable_map
 
 CRITERIA = {
     "singability": "Would the lines fit the original melody when sung? Natural word stress, "
                    "no cramming, no filler words added just to hit a count.",
     "humor": "Do the jokes land? Specific, surprising jokes beat generic ones.",
     "parody_craft": "Does it echo the original song's structure, hook, and phrasing cleverly, "
-                    "without just copying lines?",
+                    "without relying on copied source lines? A repeated hook can be part of the craft.",
     "coherence": "Does each part have a point, and do the sections flow naturally into each other?",
     "interplay": "Do the later parts actually respond to what the "
                  "other singers wrote?",
@@ -45,7 +45,7 @@ def _context(result: dict) -> str:
                  "sections, and how well they fit with the given chorus.",
         "original": "The chorus is the original song's chorus; the singers didn't write it. Judge "
                     "the generated sections, and how well they fit with it.",
-    }.get(cfg["chorus"], "The singers wrote the chorus too.")
+    }.get(cfg["chorus"], "The chorus was generated as part of the song.")
     if spec.chorus_key() is None:
         chorus_note = "This template has no shared chorus; judge all generated sections."
     given = [spec.sections[k].label for k, part in result["parts"].items()
@@ -61,12 +61,31 @@ def _context(result: dict) -> str:
     setup = "\n".join(x for x in setup if x.strip())
     setup_note = (f"The singers were given this setup:\n<setup>\n{setup}\n</setup>" if setup
                   else "The singers were given no setup beyond the song itself.")
+    refrains = []
+    for sec in spec.sections.values():
+        groups: dict[str, list[int]] = {}
+        for i, line in enumerate(sec.lines, 1):
+            if line.refrain:
+                groups.setdefault(line.refrain, []).append(i)
+        refrains.extend(f"{sec.label} lines {', '.join(map(str, idxs))}"
+                        for idxs in groups.values() if len(idxs) > 1)
+    refrain_note = (
+        "These lines are marked as deliberate refrains: " + "; ".join(refrains) +
+        ". Repeating their hook phrase or ending is part of the form. Judge whether the "
+        "refrain works, rather than treating the repetition itself as a weak rhyme or a flaw.\n\n"
+        if refrains else ""
+    )
     n = len(cfg["models"])
+    internal = [f"{sec.label} line {i}: {describe_internal_rhyme(line.internal_rhyme)}."
+                for sec in spec.sections.values() for i, line in enumerate(sec.lines, 1)
+                if line.internal_rhyme]
+    internal_note = ("Required internal rhymes:\n" + "\n".join(internal) + "\n\n"
+                     if internal else "")
     by = "one AI model" if n == 1 else f"{n} AI models"
     return (
         f'This is a parody written by {by} to the tune of "{spec.title}" '
-        f"({spec.artist}). {chorus_note}\n\n{setup_note}\n\n"
-        f"Target syllables per line:\n{syllable_map(spec)}\n\n"
+        f"({spec.artist}). {chorus_note}\n\n{setup_note}\n\n{refrain_note}"
+        f"Target syllables per line:\n{syllable_map(spec)}\n\n{internal_note}"
         f"You can't hear it, so judge singability from the text and the target counts. "
         f"Text inside <adlib> tags is an uncounted ad-lib, not part of the main line's meter or rhyme."
     )

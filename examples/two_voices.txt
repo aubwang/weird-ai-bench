@@ -1,0 +1,13 @@
+[opening]
+The road is long
+
+[refrain]
+We cross the bridge
+We ride the train
+
+[exchange]
+You choose the path
+I choose the lane
+
+[ending]
+And we ride the train

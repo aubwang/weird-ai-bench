@@ -6,7 +6,7 @@ import re
 from dataclasses import asdict, dataclass, field
 
 from .phonetics import VOWELS, Pron, Token, WordInfo, strip_adlibs, tokenize
-from .spec import LineSpec, SectionSpec, slack_bounds
+from .spec import InternalRhymeSpec, LineSpec, SectionSpec, describe_internal_rhyme, slack_bounds
 
 GATES = ("structure", "syllables", "stress", "split", "rhyme", "internal_rhyme")
 
@@ -52,6 +52,7 @@ class LineReport:
     rhyme_with: int | None = None
     rhyme_ok: bool | None = None
     internal_ok: bool | None = None
+    internal_requirement: str | None = None
     hook_ok: bool | None = None
     guessed_words: list[str] = field(default_factory=list)
 
@@ -255,7 +256,7 @@ def _sound_level(a: WordInfo, b: WordInfo, min_syllables: int) -> str:
     return best
 
 
-_RANK = {"full": 2, "slant": 1, "none": 0, "same_sound": 0, "identical": 0}
+_RANK = {"full": 2, "refrain": 2, "slant": 1, "none": 0, "same_sound": 0, "identical": 0}
 
 
 def rhyme_credit(l: LineReport) -> float | None:
@@ -273,7 +274,24 @@ def _norm_text(s: str) -> str:
     return " ".join(re.sub(r"[^\w' ]", " ", s).split())
 
 
-def internal_rhyme(text: str, overrides: dict | None = None) -> bool:
+def internal_rhyme(text: str, overrides: dict | None = None,
+                   rule: bool | InternalRhymeSpec = True) -> bool:
+    if isinstance(rule, InternalRhymeSpec):
+        # Filter pronunciations before comparing sounds, so the same reading
+        # supplies both the required word length and the rhyme.
+        tokens = tokenize(text, overrides)
+        words = []
+        for i, token in enumerate(tokens):
+            w = token.info
+            if w.weak or w.norm in _TRIVIAL:
+                continue
+            prons = [p for p in w.prons if not p.guessed and
+                     (rule.word_syllables is None or p.syllables == rule.word_syllables)]
+            if prons:
+                words.append((i, WordInfo(w.text, w.norm, prons, w.weak, w.guessed)))
+        return any(rhyme_level(a, b) == "full"
+                   for k, (_, a) in enumerate(words) for j, b in words[k + 1:]
+                   if not rule.end_word or j == len(tokens) - 1)
     toks = [t for t in tokenize(text, overrides)
             if not t.info.weak and t.info.norm not in _TRIVIAL]
     for i in range(len(toks)):
@@ -333,7 +351,8 @@ class SectionReport:
             if "split" in gates and l.split_ok is False and l.syllables_ok:
                 out.append(f"{n} (\"{l.text}\") needs a pause (comma or dash) exactly at the split point.")
             if "internal_rhyme" in gates and l.internal_ok is False:
-                out.append(f"{n} (\"{l.text}\") needs an internal rhyme between two of its words.")
+                need = l.internal_requirement or "an internal rhyme between two of its words"
+                out.append(f"{n} (\"{l.text}\") needs {need}.")
         if "rhyme" in gates:
             out += self.rhyme_errors
         return out
@@ -382,7 +401,8 @@ def verify_section(lines: list[str], sec: SectionSpec, overrides: dict | None = 
         lr = analyze_line(text, ls, overrides, tolerance, index=i)
         lr.rhyme_group = ls.rhyme
         if ls.internal_rhyme:
-            lr.internal_ok = internal_rhyme(text, overrides)
+            lr.internal_ok = internal_rhyme(text, overrides, ls.internal_rhyme)
+            lr.internal_requirement = describe_internal_rhyme(ls.internal_rhyme)
         rep.lines.append(lr)
 
     # The hook: the chorus's own hook line, or one passed in.
@@ -407,6 +427,7 @@ def verify_section(lines: list[str], sec: SectionSpec, overrides: dict | None = 
         if len(toks) > 1 and toks[-1].info.norm in _ENCLITICS:
             ends[lr.index].append(_joined(toks[-2].info, toks[-1].info))
     groups: dict[str, list[LineReport]] = {}
+    refrain_by_line = {i: ls.refrain for i, ls in enumerate(specs, 1)}
     for lr, ls in zip(rep.lines, specs):
         if ls.rhyme and not ls.repeats_hook:
             groups.setdefault(ls.rhyme, []).append(lr)
@@ -425,6 +446,9 @@ def verify_section(lines: list[str], sec: SectionSpec, overrides: dict | None = 
             if not levels:
                 return "none"
             best = max(levels, key=lambda x: _RANK[x])
+            if (best == "identical" and refrain_by_line[a.index] and
+                    refrain_by_line[a.index] == refrain_by_line[b.index]):
+                return "refrain"
             if _RANK[best] == 0:
                 best = next((x for x in ("same_sound", "identical") if x in levels), best)
             return best

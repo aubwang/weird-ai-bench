@@ -1,7 +1,7 @@
 """Verifier tests on synthetic, independently specified lines."""
 
 from songbench.phonetics import tokenize, word_info
-from songbench.spec import LineSpec, RhymeSpec, SectionSpec, describe_line
+from songbench.spec import InternalRhymeSpec, LineSpec, RhymeSpec, SectionSpec, describe_line
 from songbench.verify import analyze_line, internal_rhyme, rhyme_level, verify_section
 
 
@@ -51,6 +51,21 @@ def test_repeating_an_earlier_sound_is_caught_past_the_anchor():
                                 "'light'. Lines 1, 2, 3 need a rhyme."]
 
 
+def test_tagged_refrain_allows_repeated_end_word_only_within_its_group():
+    lines = ["We walk back home", "You hurry back home"]
+    tagged = SectionSpec("chorus", "Chorus", [LineSpec(4, rhyme="A", refrain="R"),
+                                               LineSpec(5, rhyme="A", refrain="R")],
+                         {"A": RhymeSpec()}, singer=1)
+    rep = verify_section(lines, tagged)
+    assert rep.gate("rhyme") and rep.lines[1].rhyme_level == "refrain"
+    assert rep.scores()["rhyme"] == 1
+
+    tagged.lines[1].refrain = "other"
+    assert not verify_section(lines, tagged).gate("rhyme")
+    tagged.lines[1].refrain = None
+    assert not verify_section(lines, tagged).gate("rhyme")
+
+
 def test_wrenched_rhyme_on_a_sung_last_syllable():
     assert rhyme_level(word_info("confident"), word_info("tent")) == "slant"
     assert rhyme_level(word_info("button"), word_info("cat")) == "none"
@@ -81,6 +96,25 @@ def test_internal_rhyme_and_split():
     spec = LineSpec(4, split=[2, 2])
     assert analyze_line("The sky, is bright", spec).split_ok
     assert not analyze_line("The sky is bright", spec).split_ok
+
+
+def test_internal_rhyme_word_lengths_and_line_ending():
+    rule = InternalRhymeSpec(word_syllables=3, end_word=True)
+    assert internal_rhyme("Try GPT then LLC", rule=rule)
+    assert internal_rhyme("Try G-P-T then L-L-C (hey)", rule=rule)
+    assert not internal_rhyme("Try GPT then GPT", rule=rule)
+    assert not internal_rhyme("Try GPT then tea", rule=rule)
+    assert not internal_rhyme("The bright light helps GPT", rule=rule)
+    assert not internal_rhyme("Try GPT then LLC tonight", rule=rule)
+    assert not internal_rhyme("Try GPT <adlib>LLC</adlib>", rule=rule)
+    assert internal_rhyme("Try GPT then LLC tonight", rule=InternalRhymeSpec(3))
+
+    sec = SectionSpec("hook", "Hook", [LineSpec(8, internal_rhyme=rule)], {}, singer=1)
+    assert verify_section(["Try GPT then LLC"], sec).passed()
+    failed = verify_section(["See the bright light then GPT"], sec)
+    assert failed.gate("syllables") and not failed.gate("internal_rhyme")
+    assert "3-syllable words or acronyms" in failed.errors()[0]
+    assert "end of the line" in failed.errors()[0]
 
 
 def test_hook_repetition():
