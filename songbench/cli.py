@@ -10,11 +10,13 @@ import random
 import sys
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import replace
 from pathlib import Path
 
 from .llm import DEFAULT_MAX_TOKENS, LLMError, OpenRouterClient
 from .orchestrate import (
-    CHORUS, GUIDANCE, NAMES, TRACKS, ConfigError, RunConfig, Song, render_sheet, rescore, save,
+    CHORUS, GUIDANCE, NAMES, TRACKS, ConfigError, RunConfig, Song, reference_lines, render_sheet,
+    rescore, save,
 )
 from .prompts import chorus_task, render_song_so_far, section_task, trade_line_task
 from .scenario import bundled_scenarios, load_scenario
@@ -100,7 +102,13 @@ def cmd_run(args) -> int:
         _log(f"{' x '.join(cfg.models)} · {song.scenario.id} · {cfg.names} · "
              f"chorus {cfg.chorus} · {cfg.track}")
         song.log = _log
-        result = song.run()
+        try:
+            result = song.run()
+        except LLMError as e:
+            # Save what was written, so failures count against the model in stats.
+            jp, _ = save(song.failed_result(str(e)), args.out)
+            _log(f"error: {e}\nsaved the partial song to {jp}")
+            return 1
         # Preserve paid generation even if optional judging fails.
         jp, mp = save(result, args.out)
         _log(f"saved {jp} and {mp}")
@@ -117,7 +125,15 @@ def cmd_run(args) -> int:
 
 def _run_one(args, cfg: RunConfig) -> dict:
     client = _client(args)
-    result = Song(cfg, client).run()
+    if cfg.seed is not None:
+        client.seed = cfg.seed  # each sample has its own
+    song = Song(cfg, client)
+    try:
+        result = song.run()
+    except LLMError as e:
+        result = song.failed_result(str(e))
+        save(result, args.out)
+        return result
     save(result, args.out)
     if args.judge:
         from .judge import rubric
@@ -168,7 +184,9 @@ def cmd_matrix(args) -> int:
         except ConfigError as e:
             _log(f"skip {' x '.join(cast)} {sc.id}: {e}")
             continue
-        jobs += [cfg] * args.samples
+        # A distinct seed per sample, or providers that honor seeds repeat the same song.
+        jobs += [replace(cfg, seed=None if cfg.seed is None else cfg.seed + i)
+                 for i in range(args.samples)]
     _log(f"{len(jobs)} songs across {len(casts)} lineups")
     if args.dry_run:
         for c in jobs:
@@ -178,7 +196,7 @@ def cmd_matrix(args) -> int:
     out.mkdir(parents=True, exist_ok=True)
     rows, failures = [], 0
     with ThreadPoolExecutor(max_workers=args.workers) as ex:
-        futs = {ex.submit(_run_one, args, RunConfig(**vars(c))): c for c in jobs}
+        futs = {ex.submit(_run_one, args, replace(c, personas=list(c.personas))): c for c in jobs}
         for i, f in enumerate(as_completed(futs), 1):
             c = futs[f]
             try:
@@ -187,21 +205,33 @@ def cmd_matrix(args) -> int:
                 failures += 1
                 _log(f"[{i}/{len(jobs)}] FAILED {' x '.join(c.models)} {c.scenario} {c.track}: {e}")
                 continue
+            if "failed" in r:
+                failures += 1
             b = r["scores"]["by_singer"].values()
             per = lambda k: ";".join("" if x[k] is None else f"{x[k]:.3f}" for x in b)
             row = {"id": r["id"], "spec": r["spec"], "models": ";".join(c.models),
                    "scenario": r["scenario_snapshot"]["id"], "names": c.names,
                    "chorus": r["config"]["chorus"], "track": c.track, "guidance": c.guidance,
                    "adherence": per("adherence"), "first_try": per("first_try_pass_rate"),
-                   "strict_pass": r["scores"]["strict_pass"], "cost": r["usage"]["cost"],
+                   "strict_pass": r["scores"]["strict_pass"], "failed": "failed" in r,
+                   "cost": r["usage"]["cost"],
                    "judge_overall": r.get("judge", {}).get("scores", {}).get("overall")}
             rows.append(row)
-            _log(f"[{i}/{len(jobs)}] {' x '.join(c.models)} {c.scenario} {c.track} done")
+            status = f"FAILED (saved): {r['failed']['error']}" if "failed" in r else "done"
+            _log(f"[{i}/{len(jobs)}] {' x '.join(c.models)} {c.scenario} {c.track} {status}")
     if rows:
         csv_path = out / "matrix.csv"
         new = not csv_path.exists()
+        fields = list(rows[0])
+        if not new:
+            with csv_path.open(newline="") as fh:
+                header = next(csv.reader(fh), None)
+            if header and header != fields:
+                csv_path = out / "matrix-v2.csv"
+                new = not csv_path.exists()
+                _log(f"matrix.csv has older columns; writing to {csv_path.name} instead")
         with csv_path.open("a", newline="") as fh:
-            w = csv.DictWriter(fh, fieldnames=list(rows[0]))
+            w = csv.DictWriter(fh, fieldnames=fields)
             if new:
                 w.writeheader()
             w.writerows(rows)
@@ -230,10 +260,12 @@ def cmd_check(args) -> int:
          if line.hook),
         None,
     )
+    reference = reference_lines(spec)
     ok = True
     for key, lines in sections.items():
         sec = spec.sections[key]
-        rep = verify_section(lines, sec, spec.syllable_overrides, args.tolerance, hook=hook)
+        rep = verify_section(lines, sec, spec.syllable_overrides, args.tolerance, hook=hook,
+                             reference=reference)
         print(f"== {sec.label} ==")
         for l in rep.lines:
             fits = f" ({max(l.target - l.under, 1)}-{l.target + l.over})" if l.under or l.over else ""
@@ -249,6 +281,8 @@ def cmd_check(args) -> int:
                 marks.append("split ok" if l.split_ok else "split ✗")
             if l.internal_ok is not None:
                 marks.append("internal rhyme ok" if l.internal_ok else "internal rhyme ✗")
+            if l.copied:
+                marks.append("copied ✗")
             if l.guessed_words:
                 marks.append("guessed: " + ", ".join(l.guessed_words))
             print(f"{l.index:>2}. {l.text}\n    " + " · ".join(marks))
@@ -321,13 +355,14 @@ def cmd_stats(args) -> int:
     if not rows:
         _log("no runs found")
         return 1
-    f = lambda v: "–" if v is None else f"{v:.0%}" if isinstance(v, float) and v <= 1 else f"{v:.2f}" if isinstance(v, float) else str(v)
-    print(f"{'model':<40} {'track':<9} {'guidance':<8} {'songs':>5} {'adher.':>7} {'1st-try':>8} {'final':>6} {'retries':>8} {'judge':>6}")
+    f = lambda v: "–" if v is None else f"{v:.0%}"
+    num = lambda v: "–" if v is None else f"{v:.1f}"
+    print(f"{'spec':<16} {'model':<36} {'track':<9} {'guidance':<8} {'songs':>5} {'failed':>6} "
+          f"{'adher.':>7} {'1st-try':>8} {'final':>6} {'retries':>8} {'judge':>6}")
     for r in rows:
-        print(f"{r['model']:<40} {r['track']:<9} {r['guidance']:<8} {r['songs']:>5} {f(r['adherence']):>7} "
-              f"{f(r['first_try_pass']):>8} {f(r['final_pass']):>6} "
-              f"{'–' if r['retries_per_song'] is None else format(r['retries_per_song'], '.1f'):>8} "
-              f"{'–' if r['judge_overall'] is None else format(r['judge_overall'], '.1f'):>6}")
+        print(f"{r['spec']:<16} {r['model']:<36} {r['track']:<9} {r['guidance']:<8} {r['songs']:>5} "
+              f"{r['failed']:>6} {f(r['adherence']):>7} {f(r['first_try_pass']):>8} "
+              f"{f(r['final_pass']):>6} {num(r['retries_per_song']):>8} {num(r['judge_overall']):>6}")
     if args.csv:
         with open(args.csv, "w", newline="") as fh:
             w = csv.DictWriter(fh, fieldnames=list(rows[0]))
@@ -346,11 +381,24 @@ def cmd_leaderboard(args) -> int:
     first = Path(args.paths[0])
     cache = (first if first.is_dir() else first.parent) / "judgments.jsonl"
     lb = leaderboard(runs, client, args.judge, cache, max_pairs=args.max_pairs,
-                     seed=args.seed or 0, mix=args.mix, log=_log)
-    print(f"Judge: {lb['judge']} · {lb['pairs']} pairwise comparisons\n")
-    print(f"{'#':>2}  {'model':<44} {'elo':>5} {'games':>6} {'win%':>6}")
+                     seed=args.seed or 0, mix=args.mix, log=_log, bootstrap=args.bootstrap,
+                     prior_sd=args.prior_sd)
+    for w in lb["warnings"]:
+        _log(f"warning: {w}")
+    flips = "" if lb["flip_rate"] is None else f" · judge flipped with order on {lb['flip_rate']:.0%}"
+    forfeits = f" ({lb['forfeits']} forfeits by failed songs)" if lb["forfeits"] else ""
+    print(f"Judge: {lb['judge']} · {lb['pairs']} pairwise comparisons{forfeits}{flips}\n")
+    if not lb["table"]:
+        return 1
+    ci = lb["table"][0]["elo_lo"] is not None
+    print(f"{'#':>2}  {'model':<44} {'elo':>5} " + (f"{'95% interval':>13} " if ci else "")
+          + f"{'games':>6} {'win%':>6}")
     for i, r in enumerate(lb["table"], 1):
-        print(f"{i:>2}  {r['model']:<44} {r['elo']:>5} {r['games']:>6} {r['win_rate']:>6.0%}")
+        band = f"{r['elo_lo']:>6}-{r['elo_hi']:<6} " if ci else ""
+        win = "–" if r["win_rate"] is None else f"{r['win_rate']:.0%}"
+        print(f"{i:>2}  {r['model']:<44} {r['elo']:>5} {band}{r['games']:>6} {win:>6}")
+    if ci:
+        print("\nIntervals resample songs within each group; overlapping intervals are not a ranking.")
     return 0
 
 
@@ -436,6 +484,10 @@ def main(argv=None) -> int:
     p.add_argument("--judge", required=True)
     p.add_argument("--max-pairs", type=int, default=200)
     p.add_argument("--mix", action="store_true", help="compare across settings, not just within")
+    p.add_argument("--bootstrap", type=int, default=200,
+                   help="bootstrap resamples for the 95%% intervals (0 turns them off)")
+    p.add_argument("--prior-sd", type=float, default=1.0,
+                   help="spread of the prior on model strengths, in logits")
     p.add_argument("--seed", type=int)
     p.add_argument("--max-tokens", type=int, default=DEFAULT_MAX_TOKENS)
     p.set_defaults(func=cmd_leaderboard)

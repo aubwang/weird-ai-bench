@@ -11,10 +11,10 @@ from songbench.llm import ScriptedClient
 from songbench.orchestrate import ConfigError, RunConfig, Song
 from songbench.spec import load_spec
 
-SCRIPT = ["<lyrics>We watch the light\nWe walk back home</lyrics>",
-          "<lyrics>The sky is bright</lyrics>",
-          "<lyrics>You take the road</lyrics>", "<lyrics>I take the train</lyrics>",
-          "<lyrics>Now we walk back home</lyrics>"]
+SCRIPT = ["<lyrics>We chase the dawn\nWe head for town</lyrics>",
+          "<lyrics>The moon is low</lyrics>",
+          "<lyrics>You find the key</lyrics>", "<lyrics>I find the door</lyrics>",
+          "<lyrics>Now we head for town</lyrics>"]
 # Words that only appear when a prompt describes the song map.
 MAP_WORDS = ("syllable", "stress", "rhyme", "hook", "invitation")
 

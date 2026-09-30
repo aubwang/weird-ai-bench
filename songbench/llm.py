@@ -130,9 +130,42 @@ class ScriptedClient:
         return Completion(text=text, model=model, prompt_tokens=0, completion_tokens=0, cost=0.0)
 
 
+# Model-name prefixes for ids without a vendor ("claude-sonnet-5" on an OpenAI-compatible proxy).
+_NAME_FAMILY = {
+    "claude": "anthropic",
+    "gpt": "openai", "chatgpt": "openai", "o1": "openai", "o3": "openai", "o4": "openai",
+    "openai": "openai",
+    "gemini": "google", "gemma": "google",
+    "llama": "meta-llama",
+    "grok": "x-ai",
+    "deepseek": "deepseek",
+    "qwen": "qwen",
+    "mistral": "mistralai", "mixtral": "mistralai", "codestral": "mistralai",
+}
+_VENDOR_FAMILY = {"meta": "meta-llama", "xai": "x-ai", "mistral": "mistralai", "claude": "anthropic"}
+
+
+def _known_family(mid: str) -> str | None:
+    """Family of a lowercase id by its vendor prefix or model name; None when unrecognised."""
+    if "/" in mid:
+        vendor, rest = mid.split("/", 1)
+        vendor = _VENDOR_FAMILY.get(vendor, vendor)
+        return vendor if vendor in _NAME_FAMILY.values() else _known_family(rest)
+    name = mid.split(":")[0]
+    for key in sorted(_NAME_FAMILY, key=len, reverse=True):
+        if name.startswith(key) and not name[len(key):len(key) + 1].isalpha():
+            return _NAME_FAMILY[key]
+    return None
+
+
 def family(model_id: str) -> str:
-    """Provider family from an OpenRouter id: 'openai/gpt-5' -> 'openai'."""
-    return model_id.split("/", 1)[0].lower() if "/" in model_id else model_id.lower()
+    """Provider family: 'openai/gpt-5' -> 'openai', and a bare 'gpt-5' -> 'openai' too.
+
+    Known vendors and model names are normalised. Otherwise a prefixed id is its vendor
+    ('provider/model-a' -> 'provider') and a bare id is its own family.
+    """
+    mid = model_id.strip().lower()
+    return _known_family(mid) or (mid.split("/", 1)[0] if "/" in mid else mid)
 
 
 def display_name(model_id: str) -> str:

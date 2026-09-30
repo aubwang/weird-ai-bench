@@ -3,7 +3,7 @@
 import httpx
 import pytest
 
-from songbench.llm import LLMError, OpenRouterClient, OPENROUTER_URL
+from songbench.llm import LLMError, OpenRouterClient, OPENROUTER_URL, family
 
 
 @pytest.mark.parametrize("base,router,song,explicit,expected", [
@@ -47,3 +47,34 @@ def test_custom_endpoint_never_falls_back_to_router_key(monkeypatch, base):
     monkeypatch.setattr("songbench.llm.httpx.Client", unexpected_client)
     with pytest.raises(LLMError, match="SONGBENCH_API_KEY"):
         OpenRouterClient()
+
+
+@pytest.mark.parametrize("model,expected", [
+    ("openai/gpt-5", "openai"),
+    ("anthropic/claude-sonnet-5:thinking", "anthropic"),
+    ("meta-llama/llama-4", "meta-llama"),
+    ("x-ai/grok-4", "x-ai"),
+    ("google/gemini-3", "google"),
+    ("Meta/Llama-4", "meta-llama"),
+    ("xai/grok-4", "x-ai"),
+    ("provider/model-a", "provider"),
+    ("claude-sonnet-5", "anthropic"),
+    ("gpt-5", "openai"),
+    ("chatgpt-4o-latest", "openai"),
+    ("o3-mini", "openai"),
+    ("o4", "openai"),
+    ("gemini-3-pro", "google"),
+    ("gemma3", "google"),
+    ("llama3.1-70b", "meta-llama"),
+    ("grok-4", "x-ai"),
+    ("deepseek-r1", "deepseek"),
+    ("qwen2.5-72b", "qwen"),
+    ("mixtral-8x7b", "mistralai"),
+    ("codestral", "mistralai"),
+    ("azure/gpt-5", "openai"),
+    ("model-a", "model-a"),
+    ("ollama-mini", "ollama-mini"),
+    ("omega", "omega"),
+])
+def test_family(model, expected):
+    assert family(model) == expected

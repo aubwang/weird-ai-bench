@@ -2,12 +2,17 @@
 
 from __future__ import annotations
 
+import html
 import json
+import math
 import re
 
-from .llm import family
+from .llm import display_name, family
 from .orchestrate import render_sheet, result_scenario
 from .spec import describe_internal_rhyme, result_spec, syllable_map
+
+# Bump when a judge prompt changes; cached judgments from other versions are ignored.
+JUDGE_VERSION = 2
 
 CRITERIA = {
     "singability": "Would the lines fit the original melody when sung? Natural word stress, "
@@ -29,12 +34,72 @@ def criteria(result: dict) -> dict[str, str]:
     return crit
 
 
+def family_overlap(models: list[str], judge_model: str) -> list[str]:
+    """The singer models that come from the judge's family, in order, without repeats."""
+    fam = family(judge_model)
+    return list(dict.fromkeys(m for m in models if family(m) == fam))
+
+
 def same_family_warning(result: dict, judge_model: str) -> str | None:
-    fams = {family(m) for m in result["config"]["models"]}
-    if family(judge_model) in fams:
-        return (f"judge {judge_model} is from the same family as a singer; "
+    shared = family_overlap(result["config"]["models"], judge_model)
+    if shared:
+        return (f"judge {judge_model} is from the same family as a singer ({', '.join(shared)}); "
                 f"scores may favor its own family's style")
     return None
+
+
+# What models call themselves, by family (as llm.family names it).
+FAMILY_ALIASES = {
+    "anthropic": ["Claude", "Anthropic"],
+    "openai": ["ChatGPT", "GPT", "OpenAI"],
+    "google": ["Gemini", "Gemma", "Google", "Bard"],
+    "x-ai": ["Grok", "xAI"],
+    "meta-llama": ["Llama", "Meta"],
+    "deepseek": ["DeepSeek"],
+    "mistralai": ["Mistral", "Mixtral"],
+    "qwen": ["Qwen"],
+}
+# Version tails such as "-5", " 4o", "-3.5-turbo", so "GPT-5-mini" goes as one name.
+_TAIL = r"(?:[ -]?\d(?:\w|\.(?=\d))*)?(?:-[A-Za-z0-9](?:\w|\.(?=\d))*)*"
+
+
+def redact_names(text: str, result: dict, keep: tuple[str, ...] = ()) -> str:
+    """Replace singer personas, model names, and family names with "Singer N".
+
+    Matching ignores case and respects word boundaries. A name that belongs to more than one
+    singer becomes "a singer" rather than a guess, and "Singer N" itself is left alone, as is
+    any string in `keep` (the song's title and artist, which may share a word with a model name).
+    """
+    cfg = result["config"]
+    owners: dict[str, tuple[set[int], bool]] = {}  # lowercase name -> (singers, takes a version tail)
+
+    def add(name: str | None, singer: int, tail: bool) -> None:
+        if name and len(name.strip()) >= 3:
+            key = name.strip().lower()
+            who, had_tail = owners.get(key, (set(), False))
+            owners[key] = (who | {singer}, had_tail or tail)
+
+    personas = cfg.get("personas") or []
+    for i, model in enumerate(cfg["models"], 1):
+        if i <= len(personas):
+            add(personas[i - 1], i, False)
+        for name in (model, display_name(model), *FAMILY_ALIASES.get(family(model), [])):
+            add(name, i, True)
+    if not owners:
+        return text
+    names = sorted(owners, key=len, reverse=True)
+    alts = "|".join(f"({re.escape(n)}{_TAIL if owners[n][1] else ''})" for n in names)
+    kept = "|".join([r"Singer\s+\d+", *(re.escape(k) for k in sorted(keep, key=len, reverse=True) if k)])
+    pattern = re.compile(rf"(?<!\w)(?:({kept})|{alts})(['\u2019]s)?(?!\w)", re.I)
+
+    def sub(m: re.Match) -> str:
+        if m.group(1):
+            return m.group(0)
+        i = next(i for i in range(len(names)) if m.group(i + 2) is not None)
+        who = owners[names[i]][0]
+        return (f"Singer {next(iter(who))}" if len(who) == 1 else "a singer") + (m.group(len(names) + 2) or "")
+
+    return pattern.sub(sub, text)
 
 
 def _context(result: dict) -> str:
@@ -58,7 +123,7 @@ def _context(result: dict) -> str:
     setup = [scenario.render(spec)]
     setup += [f"Singer {k} was also told: {scenario.singer_text(spec, k)}"
               for k in sorted(scenario.per_singer) if scenario.singer_text(spec, k)]
-    setup = "\n".join(x for x in setup if x.strip())
+    setup = redact_names("\n".join(x for x in setup if x.strip()), result, (spec.title, spec.artist))
     setup_note = (f"The singers were given this setup:\n<setup>\n{setup}\n</setup>" if setup
                   else "The singers were given no setup beyond the song itself.")
     refrains = []
@@ -81,10 +146,17 @@ def _context(result: dict) -> str:
                 if line.internal_rhyme]
     internal_note = ("Required internal rhymes:\n" + "\n".join(internal) + "\n\n"
                      if internal else "")
+    ref = spec.reference_text()
+    ref_note = (
+        "Here are the original song's lyrics, for judging parody craft. Lines copied from the "
+        "original deserve no credit. Section and speaker tags are context only.\n"
+        f"<reference_lyrics>\n{html.escape(ref, quote=False)}\n</reference_lyrics>\n\n"
+        if ref is not None else ""
+    )
     by = "one AI model" if n == 1 else f"{n} AI models"
     return (
         f'This is a parody written by {by} to the tune of "{spec.title}" '
-        f"({spec.artist}). {chorus_note}\n\n{setup_note}\n\n{refrain_note}"
+        f"({spec.artist}). {chorus_note}\n\n{setup_note}\n\n{ref_note}{refrain_note}"
         f"Target syllables per line:\n{syllable_map(spec)}\n\n{internal_note}"
         f"You can't hear it, so judge singability from the text and the target counts. "
         f"Text inside <adlib> tags is an uncounted ad-lib, not part of the main line's meter or rhyme."
@@ -92,10 +164,41 @@ def _context(result: dict) -> str:
 
 
 def _extract_json(text: str) -> dict:
-    m = re.search(r"\{.*\}", text or "", flags=re.S)
-    if not m:
+    """The last JSON object in the reply; braces in surrounding prose don't count."""
+    dec = json.JSONDecoder()
+    text = text or ""
+    found = None
+    i = text.find("{")
+    while i != -1:
+        try:
+            obj, end = dec.raw_decode(text, i)
+        except ValueError:
+            i = text.find("{", i + 1)
+            continue
+        if isinstance(obj, dict):
+            found = obj
+        i = text.find("{", end)
+    if found is None:
         raise ValueError(f"judge returned no JSON: {text[:200]!r}")
-    return json.loads(m.group(0))
+    return found
+
+
+def _score(value) -> float | None:
+    """A rubric score from 8, 8.5, "8", or "8/10"; None when there is no usable number."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        out = float(value)
+    else:
+        m = re.match(r"\s*(\d+(?:\.\d+)?)", value) if isinstance(value, str) else None
+        if not m:
+            return None
+        out = float(m.group(1))
+    return out if math.isfinite(out) else None
+
+
+def _sheet(result: dict) -> str:
+    return redact_names(render_sheet(result, blind=True, show_scores=False), result)
 
 
 def blend_singability(scores: dict, adherence: dict[str, float]) -> None:
@@ -107,7 +210,7 @@ def blend_singability(scores: dict, adherence: dict[str, float]) -> None:
 
 def rubric(result: dict, client, judge_model: str) -> dict:
     crit = criteria(result)
-    sheet = render_sheet(result, blind=True, show_scores=False)
+    sheet = _sheet(result)
     keys = ", ".join(f'"{k}"' for k in crit)
     prompt = (
         f"{_context(result)}\n\nScore the song from 1 to 10 on each criterion:\n"
@@ -117,7 +220,7 @@ def rubric(result: dict, client, judge_model: str) -> dict:
     )
     comp = client.complete(judge_model, [{"role": "user", "content": prompt}])
     data = _extract_json(comp.text)
-    scores = {k: float(data[k]) for k in crit if k in data}
+    scores = {k: v for k in crit if (v := _score(data.get(k))) is not None}
     blend_singability(scores, result["scores"]["adherence"])
     main = [scores[k] for k in crit if k in scores]
     scores["overall"] = round(sum(main) / len(main), 2) if main else None
@@ -132,15 +235,21 @@ def rubric(result: dict, client, judge_model: str) -> dict:
 def pairwise(a: dict, b: dict, client, judge_model: str) -> dict:
     """Compare two songs twice with positions swapped. Returns winner 'a', 'b', or 'tie'."""
     votes = []
-    weigh = ", ".join(k.replace("_", " ") for k in criteria(a))
+    crit_b = criteria(b)
+    weigh = ", ".join(k.replace("_", " ") for k in criteria(a) if k in crit_b)
     for first, second, flip in ((a, b, False), (b, a, True)):
-        prompt = (
-            f"{_context(first)}\n\nHere are two songs written under the same setup. Which is "
-            f"the better parody overall, weighing {weigh}?\n\n"
-            f"SONG 1:\n\n{render_sheet(first, blind=True, show_scores=False)}\n\n"
-            f"SONG 2:\n\n{render_sheet(second, blind=True, show_scores=False)}\n\n"
-            f'Reply with JSON only: {{"winner": 1 or 2 or "tie", "reason": "one sentence"}}'
-        )
+        ctx1, ctx2 = _context(first), _context(second)
+        ask = f"Which is the better parody overall, weighing {weigh}?\n\n"
+        if ctx1 == ctx2:
+            prompt = (f"{ctx1}\n\nHere are two songs written under the same setup. {ask}"
+                      f"SONG 1:\n\n{_sheet(first)}\n\nSONG 2:\n\n{_sheet(second)}\n\n")
+        else:
+            prompt = (f"Here are two songs, each written under its own setup. {ask}"
+                      f"SONG 1 was written under this setup:\n\n{ctx1}\n\n"
+                      f"SONG 1:\n\n{_sheet(first)}\n\n"
+                      f"SONG 2 was written under this setup:\n\n{ctx2}\n\n"
+                      f"SONG 2:\n\n{_sheet(second)}\n\n")
+        prompt += 'Reply with JSON only: {"winner": 1 or 2 or "tie", "reason": "one sentence"}'
         comp = client.complete(judge_model, [{"role": "user", "content": prompt}])
         data = _extract_json(comp.text)
         w = str(data.get("winner")).strip().lower()
@@ -155,4 +264,5 @@ def pairwise(a: dict, b: dict, client, judge_model: str) -> dict:
     score_a = sum({"a": 1.0, "tie": 0.5, "b": 0.0}[v] for v in votes) / len(votes)
     winner = "a" if score_a > 0.5 else "b" if score_a < 0.5 else "tie"
     return {"a": a["id"], "b": b["id"], "winner": winner, "score_a": score_a,
-            "votes": votes, "judge": judge_model}
+            "votes": votes, "consistent": votes[0] == votes[1], "judge": judge_model,
+            "judge_version": JUDGE_VERSION}

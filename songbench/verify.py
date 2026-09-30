@@ -8,15 +8,20 @@ from dataclasses import asdict, dataclass, field
 from .phonetics import VOWELS, Pron, Token, WordInfo, strip_adlibs, tokenize
 from .spec import InternalRhymeSpec, LineSpec, SectionSpec, describe_internal_rhyme, slack_bounds
 
-GATES = ("structure", "syllables", "stress", "split", "rhyme", "internal_rhyme")
+GATES = ("structure", "syllables", "stress", "split", "rhyme", "internal_rhyme", "originality")
 
 # Bump when a rule change can move a saved run's scores; `songbench rescore`
 # brings old runs up to date. Runs saved without a version count as 1.
-SCORING_VERSION = 2
+SCORING_VERSION = 3
 
 # Unstressed words that lean on the word before them at a line end, so the pair
 # rhymes as one: "show me" / "lonely".
 _ENCLITICS = {"me", "you", "ya", "him", "her", "it", "them", "'em", "us"}
+
+# A line copies the original when it equals a reference line, or when at least
+# COPY_SHARE of its words sit inside COPY_GRAM-word runs that the reference also has.
+COPY_GRAM = 4
+COPY_SHARE = 0.6
 
 # Words that never count toward an internal rhyme (too trivial).
 _TRIVIAL = {"i", "my", "me", "you", "we", "he", "she", "it", "they", "a", "the", "so", "oh"}
@@ -54,6 +59,8 @@ class LineReport:
     internal_ok: bool | None = None
     internal_requirement: str | None = None
     hook_ok: bool | None = None
+    copied: bool | None = None  # None: not checked against the original lyrics
+    copied_words: list[str] = field(default_factory=list)
     guessed_words: list[str] = field(default_factory=list)
 
     @property
@@ -274,6 +281,36 @@ def _norm_text(s: str) -> str:
     return " ".join(re.sub(r"[^\w' ]", " ", s).split())
 
 
+def _reference_index(reference: list[str]) -> tuple[set[str], set[tuple[str, ...]]]:
+    """Normalized reference lines, and their word grams (none span a line break)."""
+    lines = [_norm_text(r).split() for r in reference]
+    grams = {tuple(w[i:i + COPY_GRAM]) for w in lines for i in range(len(w) - COPY_GRAM + 1)}
+    return {" ".join(w) for w in lines if w}, grams
+
+
+def copied_phrases(words: list[str], index: tuple[set[str], set[tuple[str, ...]]]) -> list[str]:
+    """The phrases of a line borrowed from the reference, or [] if it isn't a copy."""
+    lines, grams = index
+    if not words:
+        return []
+    if " ".join(words) in lines:
+        return [" ".join(words)]
+    covered = set()
+    for i in range(len(words) - COPY_GRAM + 1):
+        if tuple(words[i:i + COPY_GRAM]) in grams:
+            covered.update(range(i, i + COPY_GRAM))
+    if len(covered) < COPY_SHARE * len(words):
+        return []
+    runs, run = [], []
+    for i in sorted(covered):
+        if run and i != run[-1] + 1:
+            runs.append(run)
+            run = []
+        run.append(i)
+    runs.append(run)
+    return [" ".join(words[r[0]:r[-1] + 1]) for r in runs]
+
+
 def internal_rhyme(text: str, overrides: dict | None = None,
                    rule: bool | InternalRhymeSpec = True) -> bool:
     if isinstance(rule, InternalRhymeSpec):
@@ -331,6 +368,8 @@ class SectionReport:
             return all(l.rhyme_ok is not False for l in self.lines)
         if name == "internal_rhyme":
             return all(l.internal_ok is not False for l in self.lines)
+        if name == "originality":
+            return not any(l.copied for l in self.lines)
         raise ValueError(name)
 
     def passed(self, gates=GATES) -> bool:
@@ -353,30 +392,35 @@ class SectionReport:
             if "internal_rhyme" in gates and l.internal_ok is False:
                 need = l.internal_requirement or "an internal rhyme between two of its words"
                 out.append(f"{n} (\"{l.text}\") needs {need}.")
+            if "originality" in gates and l.copied:
+                out.append(f"{n} (\"{l.text}\") copies the original lyrics; write a new line.")
         if "rhyme" in gates:
             out += self.rhyme_errors
         return out
 
     def scores(self) -> dict[str, float]:
-        """Adherence per check, 0-1. Missing lines count as failures."""
+        """Adherence per check, 0-1. Missing lines count as failures, and so do
+        copied lines in every check."""
         n = max(self.expected_lines, 1)
         ls = self.lines
-        s: dict[str, float] = {"syllables": sum(l.syllables_ok for l in ls) / n}
+        s: dict[str, float] = {"syllables": sum(l.syllables_ok and not l.copied for l in ls) / n}
         # Stress and splits depend on the count, so lines with the wrong count skip them
         # rather than lose points a second time.
-        counted = [l for l in ls if l.syllables_ok]
+        counted = [l for l in ls if l.syllables_ok or l.copied]
         req = sum(l.stress_required for l in counted)
         if req:
-            s["stress"] = sum(l.stress_hits for l in counted) / req
+            s["stress"] = sum(0 if l.copied else l.stress_hits for l in counted) / req
         rl = [l for l in ls if l.rhyme_ok is not None]
         if rl:
-            s["rhyme"] = sum(rhyme_credit(l) for l in rl) / len(rl)
+            s["rhyme"] = sum(0.0 if l.copied else rhyme_credit(l) for l in rl) / len(rl)
         sp = [l for l in counted if l.split_ok is not None]
         if sp:
-            s["split"] = sum(bool(l.split_ok) for l in sp) / len(sp)
+            s["split"] = sum(bool(l.split_ok) and not l.copied for l in sp) / len(sp)
         ir = [l for l in ls if l.internal_ok is not None]
         if ir:
-            s["internal_rhyme"] = sum(bool(l.internal_ok) for l in ir) / len(ir)
+            s["internal_rhyme"] = sum(bool(l.internal_ok) and not l.copied for l in ir) / len(ir)
+        if any(l.copied is not None for l in ls):
+            s["originality"] = sum(not l.copied for l in ls) / n
         s["structure"] = 0.0 if self.structure_errors else 1.0
         s["overall"] = sum(s.values()) / len(s)
         return s
@@ -390,8 +434,13 @@ class SectionReport:
 
 def verify_section(lines: list[str], sec: SectionSpec, overrides: dict | None = None,
                    tolerance: int = 0, upto: int | None = None,
-                   hook: str | None = None) -> SectionReport:
-    """Verify `lines` against the first `upto` lines of the section spec."""
+                   hook: str | None = None, reference: list[str] | None = None,
+                   hook_given: bool = False) -> SectionReport:
+    """Verify `lines` against the first `upto` lines of the section spec.
+
+    With `reference` (every original line of the song), also flag lines that copy it.
+    A `hook_given` to the singers (a preset or the original) is required at the end of
+    its repeats, so those words don't count toward copying."""
     specs = sec.lines[: upto or len(sec.lines)]
     rep = SectionReport(section=sec.key, lines=[], expected_lines=len(specs))
     if len(lines) != len(specs):
@@ -416,6 +465,15 @@ def verify_section(lines: list[str], sec: SectionSpec, overrides: dict | None = 
             if not lr.hook_ok:
                 rep.structure_errors.append(
                     f"Line {lr.index} must end with the hook (\"{strip_adlibs(hook_text)}\").")
+    if reference is not None:
+        index = _reference_index(reference)
+        hook_words = _norm_text(hook_text).split() if hook_text and hook_given else []
+        for lr, ls in zip(rep.lines, specs):
+            words = _norm_text(lr.text).split()
+            if ls.repeats_hook and hook_words and words[-len(hook_words):] == hook_words:
+                words = words[:-len(hook_words)]
+            lr.copied_words = copied_phrases(words, index)
+            lr.copied = bool(lr.copied_words)
 
     # Rhyme groups.
     words, ends = {}, {}

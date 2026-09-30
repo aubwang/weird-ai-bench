@@ -22,8 +22,8 @@ def preset_file(tmp_path, sections, song="two_voices", name="preset.yaml"):
 
 GIVEN = {"opening": [{"text": "The sky is bright", "adlibs": ["oh"]}],
          "exchange": ["You take the road", "I take the train"]}
-RESPONSES = ["<lyrics>We watch the light\nWe walk back home</lyrics>",
-             "<lyrics>Now we walk back home</lyrics>"]
+RESPONSES = ["<lyrics>We chase the dawn\nWe head for town</lyrics>",
+             "<lyrics>Now we head for town</lyrics>"]
 
 
 def test_prewritten_solo_and_traded_sections_are_context_not_model_output(tmp_path):

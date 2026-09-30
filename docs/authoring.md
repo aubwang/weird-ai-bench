@@ -97,7 +97,7 @@ letter by letter. Ad-libs cannot supply the rhyme. Groups do not cross sections.
 To keep scoring rhyme but stop using it as a retry condition, run with:
 
 ```sh
---gates structure,syllables,stress,split,internal_rhyme
+--gates structure,syllables,stress,split,internal_rhyme,originality
 ```
 
 Changing the YAML changes the task requirements. Changing `--gates` changes

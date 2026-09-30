@@ -47,7 +47,7 @@ def write(tmp_path, raw, name="song.yaml"):
     return str(path)
 
 
-TRIO = ["<lyrics>We walk back home</lyrics>", "<lyrics>The sky is bright</lyrics>",
+TRIO = ["<lyrics>We head for town</lyrics>", "<lyrics>The moon is low</lyrics>",
         "<lyrics>You take the road</lyrics>", "<lyrics>I take the train</lyrics>",
         "<lyrics>We take the bus</lyrics>"]
 MODELS = ["a/one", "b/two", "c/three"]
@@ -120,7 +120,7 @@ def test_solo_song(tmp_path):
     spec = write(tmp_path, solo_raw())
     with pytest.raises(ConfigError, match="for 2 or more singers"):
         Song(RunConfig(["a/one"], spec=spec), ScriptedClient())
-    client = ScriptedClient(["<lyrics>We walk back home</lyrics>", "<lyrics>The sky is bright</lyrics>"])
+    client = ScriptedClient(["<lyrics>We head for town</lyrics>", "<lyrics>The moon is low</lyrics>"])
     r = Song(RunConfig(["a/one"], spec=spec, scenario="none"), client).run()
     assert r["scores"]["strict_pass"] and r["config"]["chorus"] == "1"
     system = r["threads"]["1"][0]["content"]
