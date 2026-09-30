@@ -12,7 +12,7 @@ Start with the [README](../README.md) for setup and a short walkthrough.
 | `--preset` | bundled ID or YAML path; repeatable | Supplies prewritten sections of any kind, separately from the song template |
 | `--track` | `strict` (default), `freeform` | Strict sends failed checks back for a rewrite (up to `--retries`, default 3). Freeform is one shot, and the checks are only scored |
 | `--guidance` | `full` (default), `none` | None leaves the song map (syllables, stress, rhyme, pacing notes) out of the prompts: the singers get only the reference lyrics, the line counts, and the output format. Needs `--track freeform`. The checks still score the result |
-| `--gates` | any of `structure,syllables,stress,split,rhyme,internal_rhyme` | Which checks must pass on the strict track |
+| `--gates` | any of `structure,syllables,stress,split,rhyme,internal_rhyme,originality` | Which checks must pass on the strict track |
 | `--tolerance` | integer | Allowed syllable miss per line (default 0) |
 | `--effort`, `--temperature`, `--seed` | | Passed to the model |
 | `--max-tokens` | integer | Output token cap per call, including reasoning (default 32000). Reasoning models can use more than 8000 thinking before they answer |
@@ -46,8 +46,9 @@ Leaderboard comparisons group runs by the scenario's text, not its id or path.
 The song YAML is the source of truth for both the original lyrics and pacing.
 Put original text in each line's `reference` field; section and speaker tags
 are generated from the template. The source is included in both singers'
-prompts and saved in run snapshots. It also supplies the automatic 4-gram
-originality check. `run --dry-run` previews the prompts without API calls.
+prompts and saved in run snapshots. It also supplies the originality check: a
+generated line fails it, and scores 0, when it repeats a reference line or when
+at least 60% of its words sit in 4-word runs taken from the reference. `run --dry-run` previews the prompts without API calls.
 The separate text-file options (`--reference-lyrics`, `--original-lyrics`, and
 `--chorus-file`) have been removed. `check` still accepts a plain lyric sheet
 because it checks that text against the selected YAML spec.
@@ -115,15 +116,17 @@ songbench judge runs/*.json --judge provider/independent-judge # rubric scores p
 
 The model IDs above are placeholders; choose available IDs from [OpenRouter](https://openrouter.ai/models) before running them.
 
-`matrix` runs ordered lineups, one model per singer, so each model takes every role, and appends a row per song to `runs/matrix.csv` (per-singer columns are `;`-separated in singer order). `--include-self` lets one model fill several slots. Lineups grow fast with more singers, so `--max-lineups N` samples N of them while keeping each model spread evenly across the singer slots. Use `--dry-run` to list the jobs first. A song costs roughly 5 to 20 calls.
+`matrix` runs ordered lineups, one model per singer, so each model takes every role, and appends a row per song to `runs/matrix.csv` (per-singer columns are `;`-separated in singer order). `--include-self` lets one model fill several slots. Lineups grow fast with more singers, so `--max-lineups N` samples N of them while keeping each model spread evenly across the singer slots. Use `--dry-run` to list the jobs first. A song costs roughly 5 to 20 calls. With `--seed S`, sample *i* of a configuration gets seed S+*i*, so providers that honor seeds don't repeat a song. If a model's calls fail mid-song (for example, it spends all of `--max-tokens` reasoning), the partial song is still saved with a `failed` note, so failures count against the model instead of disappearing.
 
 `rescore` re-parses and re-checks every saved attempt with the current rules, without calling a model, and rewrites the run files. Retries stay as they happened. `--spec` scores against a revised template of the same shape, such as one with new `slack`. Each run records the scoring rules it was checked under, and `stats` refuses to mix runs from different versions.
 
-`stats` reports, per model, track, and guidance: line adherence, first-try pass rate per turn, final pass rate, and retries per song.
+`stats` reports, per template, model, track, and guidance: songs, failed songs, line adherence, first-try pass rate per turn, final pass rate, and retries per song. A self-duet counts as one song.
 
-`leaderboard` compares songs written under the same settings, two at a time. Each pair is judged twice with the order swapped, and a disagreement counts as a tie, which cancels position bias. Results are fitted with an additive Bradley-Terry model: a song's strength is the sum of its singers' model strengths, which is what lets a benchmark of shared songs rank individual models. Judgments are cached in `judgments.jsonl`, so re-running only pays for new pairs.
+`leaderboard` compares songs written under the same settings, two at a time. Settings include the template, scenario text, reference lyrics, supplied sections, names, chorus, track, guidance, tolerance, temperature, effort, and on the strict track the gates and retries. Pairs are picked so every song is compared about equally often, up to `--max-pairs`, cached pairs first. Each pair is judged twice with the order swapped, and a disagreement counts as a tie, which cancels position bias; the output reports how often that happened. A song that failed mid-run loses to every finished song without a judge call.
 
-The judge is blind: it sees "Singer 1", "Singer 2", and so on, never model ids. Persona names inside the lyrics are still visible with `--names real` or `assigned`. Pick a judge from a different family than the singers; songbench warns when it isn't.
+Results are fitted with a weighted additive Bradley-Terry model: a song's strength is the sum of its singers' model strengths, each weighted by that singer's share of the generated lines as performed. That's what lets a benchmark of shared songs rank individual models, and it credits a repeated chorus to whoever wrote it. The fit puts a normal prior on each strength (`--prior-sd`, default 1 logit, about 170 Elo), so a model that wins every game still gets a finite rating. The 95% intervals come from `--bootstrap` resamples of the songs within each group; treat models with overlapping intervals as tied. Win rate counts only the games where a model's share differed between the two songs. Use at least three models or `--include-self`: with two, A×B and B×A have the same singers and differ only in who wrote which part, so the leaderboard warns that its ranking rests on that alone. Judgments are cached in `judgments.jsonl`, keyed by the judge prompt version, so re-running only pays for new pairs.
+
+The judge is blind: it sees "Singer 1", "Singer 2", and so on, never model ids. Model, persona, and family names written into the lyrics ("Claude", "ChatGPT's") are replaced with the matching "Singer N" before judging, or with "a singer" when two singers share a family. The judge also sees the reference lyrics, to judge parody craft. Pick a judge from a different family than the singers; songbench warns when it isn't.
 
 Rubric criteria (1 to 10): singability, humor, parody craft, coherence, and interplay (skipped for solo songs). The judge can't hear the song, so `singability_blended` averages its score with the automated meter score.
 

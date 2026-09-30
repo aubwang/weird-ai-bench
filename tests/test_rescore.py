@@ -11,11 +11,11 @@ from songbench.orchestrate import RunConfig, Song, rescore, save
 from songbench.spec import load_spec
 from songbench.verify import GATES, SCORING_VERSION, verify_section
 
-CHORUS = "<lyrics>We watch the light\nWe walk back home</lyrics>"
-BAD = "<lyrics>The sky is very bright</lyrics>"
-OPENING = "<lyrics>The sky is bright</lyrics>"
-TAIL = ["<lyrics>You take the road</lyrics>", "<lyrics>I take the train</lyrics>",
-        "<lyrics>Now we walk back home</lyrics>"]
+CHORUS = "<lyrics>We chase the dawn\nWe head for town</lyrics>"
+BAD = "<lyrics>A moon stays very high</lyrics>"
+OPENING = "<lyrics>A moon stays high</lyrics>"
+TAIL = ["<lyrics>Take me along</lyrics>", "<lyrics>I'll meet you there</lyrics>",
+        "<lyrics>Now we head for town</lyrics>"]
 
 
 def strict_run():
@@ -32,9 +32,9 @@ def test_rescore_matches_a_fresh_run():
 
 def test_rescore_reparses_raw_responses():
     r = strict_run()
-    r["parts"]["ending"]["lines"] = ["Now we walk back home", "</lyrics>"]
-    r["turns"][-1]["attempts"][-1]["response"] = "Now we walk back home\n</lyrics>"
-    assert rescore(r)["parts"]["ending"]["lines"] == ["Now we walk back home"]
+    r["parts"]["ending"]["lines"] = ["Now we head for town", "</lyrics>"]
+    r["turns"][-1]["attempts"][-1]["response"] = "Now we head for town\n</lyrics>"
+    assert rescore(r)["parts"]["ending"]["lines"] == ["Now we head for town"]
 
 
 def test_rescore_against_a_revised_template(tmp_path):

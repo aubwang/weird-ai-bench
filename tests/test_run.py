@@ -11,16 +11,16 @@ from songbench.cli import main
 from songbench.judge import pairwise, rubric
 from songbench.leaderboard import fit_additive_bt, gate_stats, group_key
 from songbench.llm import LLMError, ScriptedClient
-from songbench.orchestrate import ConfigError, Song, RunConfig, render_sheet, save
+from songbench.orchestrate import ConfigError, Song, RunConfig, render_sheet, rescore, save
 from songbench.prompts import parse_lyrics
 from songbench.spec import load_spec, result_spec
 
 
-CHORUS = "<lyrics>We watch the light\nWe walk back home</lyrics>"
-OPENING = "<lyrics>The sky is bright</lyrics>"
-BAD = "<lyrics>The sky is very bright</lyrics>"
-TAIL = ["<lyrics>You take the road</lyrics>", "<lyrics>I take the train</lyrics>",
-        "<lyrics>Now we walk back home</lyrics>"]
+CHORUS = "<lyrics>We chase the dawn\nWe head for town</lyrics>"
+OPENING = "<lyrics>A moon stays high</lyrics>"
+BAD = "<lyrics>A moon stays very high</lyrics>"
+TAIL = ["<lyrics>Take me along</lyrics>", "<lyrics>I'll meet you there</lyrics>",
+        "<lyrics>Now we head for town</lyrics>"]
 
 
 def script():
@@ -53,7 +53,7 @@ def test_strict_exhausts_retries_and_continues():
              ScriptedClient([CHORUS, BAD, BAD, BAD, *TAIL])).run()
     assert r["turns"][1]["retries"] == 2
     assert not r["turns"][1]["final_pass"]
-    assert r["parts"]["ending"]["lines"] == ["Now we walk back home"]
+    assert r["parts"]["ending"]["lines"] == ["Now we head for town"]
 
 
 def test_chorus_can_be_written_by_second_singer():
@@ -111,12 +111,14 @@ def test_judge_is_told_when_repetition_is_a_refrain():
 
 @pytest.mark.parametrize("n", [10, 100, 200, 1000])
 def test_bt_recovers_majority_at_different_sample_sizes(n):
-    comps = [(["a", "c"], ["b", "c"], 1.0)] * (n * 6 // 10)
-    comps += [(["a", "c"], ["b", "c"], 0.0)] * (n * 4 // 10)
-    strengths = fit_additive_bt(comps)
-    probability = 1 / (1 + math.exp(-(strengths["a"] - strengths["b"])))
+    a_c, b_c = {"a": 0.5, "c": 0.5}, {"b": 0.5, "c": 0.5}
+    comps = [(a_c, b_c, 1.0)] * (n * 6 // 10) + [(a_c, b_c, 0.0)] * (n * 4 // 10)
+    # A flat prior recovers the observed rate; the default prior shrinks small samples toward even.
+    strengths = fit_additive_bt(comps, prior_sd=1e6)
+    probability = 1 / (1 + math.exp(-0.5 * (strengths["a"] - strengths["b"])))
     assert probability == pytest.approx(0.6, abs=0.001)
-    assert strengths["c"] == pytest.approx(0)
+    shrunk = fit_additive_bt(comps)
+    assert 0 < shrunk["a"] - shrunk["b"] < strengths["a"] - strengths["b"]
 
 
 @pytest.mark.parametrize("spec_id", ["custom_song", "two_voices"])
@@ -182,3 +184,51 @@ def test_judge_failure_keeps_song(monkeypatch, tmp_path, command, failure):
     r = json.loads(files[0].read_text())
     assert r["scores"]["strict_pass"] and "judge" not in r
     assert files[0].with_suffix(".md").exists()
+
+
+class FailsOn(ScriptedClient):
+    def __init__(self, responses, fail_on):
+        super().__init__(responses)
+        self.fail_on = fail_on
+
+    def complete(self, model, messages):
+        if len(self.calls) + 1 == self.fail_on:
+            raise LLMError("boom")
+        return super().complete(model, messages)
+
+
+@pytest.mark.parametrize("fail_on, section, written, adherence", [
+    (2, "opening", ["refrain"], (1 / 2, 0)),
+    (3, "exchange", ["refrain", "opening"], (3 / 4, 0)),
+    (5, "ending", ["refrain", "opening", "exchange"], (1, 0.5)),
+])
+def test_failed_run_is_kept_with_zeros_for_the_rest(fail_on, section, written, adherence, tmp_path):
+    song = Song(RunConfig(["a/one", "b/two"]), FailsOn(script(), fail_on))
+    with pytest.raises(LLMError):
+        song.run()
+    r = song.failed_result("boom")
+    assert r["failed"] == {"error": "boom", "section": section}
+    assert not r["scores"]["strict_pass"]
+    assert [k for k, p in r["parts"].items() if p["lines"]] == written
+    assert all(p["author"] for p in r["parts"].values())
+    by = r["scores"]["by_singer"]
+    assert (by["1"]["adherence"], by["2"]["adherence"]) == pytest.approx(adherence)
+    assert r["scores"]["adherence"][section] == 0
+    assert r["verification"][section]["structure_errors"]
+    sheet = render_sheet(r)
+    assert f"_Failed during {song.spec.sections[section].label}: boom_" in sheet
+    assert "Failed" not in render_sheet(r, blind=True)
+    save(r, tmp_path)
+    again = rescore(json.loads(json.dumps(r)))
+    assert again["failed"] == r["failed"] and not again["scores"]["strict_pass"]
+    assert again["scores"] == r["scores"] and again["parts"] == r["parts"]
+
+
+def test_failed_trade_keeps_lines_written_so_far():
+    song = Song(RunConfig(["a/one", "b/two"]), FailsOn(script(), 4))
+    with pytest.raises(LLMError):
+        song.run()
+    r = song.failed_result("boom")
+    assert r["failed"]["section"] == "exchange"
+    assert r["parts"]["exchange"] == {"lines": ["Take me along"], "author": [1, 2]}
+    assert r["scores"]["by_singer"]["2"]["adherence"] == 0

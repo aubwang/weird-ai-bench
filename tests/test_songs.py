@@ -14,11 +14,17 @@ from songbench.spec import InternalRhymeSpec, bundled_specs, load_spec, slack_hi
 
 
 def responses():
-    return ["<lyrics>We watch the light\nWe walk back home</lyrics>",
-            "<lyrics>The sky is bright</lyrics>",
-            "<lyrics>You take the road</lyrics>",
-            "<lyrics>I take the train</lyrics>",
-            "<lyrics>Now we walk back home</lyrics>"]
+    # Original lines: copying the reference would fail the originality gate.
+    return ["<lyrics>We chase the dawn\nWe head for town</lyrics>",
+            "<lyrics>The moon is low</lyrics>",
+            "<lyrics>You find the key</lyrics>",
+            "<lyrics>I find the door</lyrics>",
+            "<lyrics>Now we head for town</lyrics>"]
+
+
+def given_hook_responses():
+    # The ending must end with the supplied hook, but not repeat the source's ending line.
+    return responses()[1:-1] + ["<lyrics>So we walk back home</lyrics>"]
 
 
 def test_second_song_runs_with_source_reference_and_second_line_hook():
@@ -105,7 +111,7 @@ def test_song_specific_fixed_chorus_is_used(tmp_path):
     lines = ["We watch the light", "We walk back home"]
     preset = tmp_path / "chorus.yaml"
     preset.write_text(yaml.safe_dump({"song": "two_voices", "sections": {"refrain": lines}}))
-    client = ScriptedClient(responses()[1:])
+    client = ScriptedClient(given_hook_responses())
     r = Song(RunConfig(["a/one", "b/two"], spec="two_voices", presets=[str(preset)]), client).run()
     assert r["config"]["chorus"] == "fixed"
     assert r["parts"]["refrain"]["lines"] == lines
@@ -120,7 +126,7 @@ def test_explicit_fixed_requires_own_chorus():
 
 def test_original_chorus_can_come_from_annotated_source():
     r = Song(RunConfig(["a/one", "b/two"], spec="two_voices", chorus="original"),
-             ScriptedClient(responses()[1:])).run()
+             ScriptedClient(given_hook_responses())).run()
     assert r["parts"]["refrain"]["lines"] == ["We watch the light", "We walk back home"]
     assert r["scores"]["strict_pass"]
 

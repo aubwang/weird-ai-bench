@@ -55,14 +55,14 @@ By default, songbench asks a model to rewrite a part that fails its checks, up t
 ## Compare models
 
 ```sh
-songbench matrix --models provider/model-a,provider/model-b \
+songbench matrix --models provider/model-a,provider/model-b,provider/model-c \
   --tracks strict,freeform --samples 2 --dry-run
 # Remove --dry-run to generate the songs.
 songbench stats runs/
 songbench leaderboard runs/ --judge provider/independent-judge
 ```
 
-`matrix` tries each model in each singer slot. `stats` needs no judge; `leaderboard` asks a judge to compare songs in both presentation orders, then fits an additive Bradley–Terry model to estimate each model's strength. The IDs above are placeholders; use available models, and choose a judge from a different model family than the singers.
+`matrix` tries each model in each singer slot. `stats` needs no judge; `leaderboard` asks a judge to compare songs in both presentation orders, then fits an additive Bradley–Terry model to estimate each model's strength, with a 95% interval. Use at least three models (or `--include-self`): with two, every song has the same pair of singers, and only the split of parts between them tells the songs apart. The IDs above are placeholders; use available models, and choose a judge from a different model family than the singers.
 
 The [CLI reference](docs/reference.md) covers the other settings, judging, and scoring rules.
 

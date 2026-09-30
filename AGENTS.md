@@ -49,14 +49,26 @@ Tests use `ScriptedClient`, so they don't need the network.
   never groups guided and unguided songs together.
 - **Presets are context, not model output.** They're verified but never
   credited to a model or retried.
+- **Copying the original earns nothing.** A generated line made mostly of
+  4-grams from the reference lyrics fails the `originality` gate and scores 0,
+  since the reference lines pass the meter checks by construction.
 - **Judging is blind.** The judge sees "Singer 1", "Singer 2", and so on, and
-  should come from a different model family than the singers. The leaderboard
+  model, persona, and family names inside the lyrics are redacted to match. It
+  should come from a different model family than the singers. The judge also
+  sees the reference lyrics, since it rates parody craft. The leaderboard
   judges each pair twice with the order swapped, and a disagreement counts as a
-  tie. The fit is additive Bradley-Terry: a song's strength is the sum of its
-  singers' model strengths.
+  tie.
+- **The fit is weighted additive Bradley-Terry.** A song's strength is its
+  singers' model strengths weighted by each singer's share of the generated
+  lines as performed, so a repeated chorus counts for its writer and a
+  self-duet's strength is its model's. It's a MAP fit with a N(0, 1) prior, and
+  the intervals come from resampling runs within each group.
+- **Failures count.** A song whose API calls failed is saved with what was
+  written; it scores 0 on the missing parts and forfeits its leaderboard pairs.
 - **Grouping is by content.** Leaderboard groups compare the template,
   scenario text, reference lyrics, and supplied sections by content, never by
-  file name or id.
+  file name or id. Settings that change outcomes (tolerance, temperature,
+  effort, and on the strict track, gates and retries) are part of the group.
 
 ## Open questions
 
