@@ -1,6 +1,7 @@
 """Song-independent generation, source annotations, and CLI behavior."""
 
 from dataclasses import asdict
+from pathlib import Path
 
 import pytest
 import yaml
@@ -9,7 +10,7 @@ from songbench.cli import main
 from songbench.judge import rubric
 from songbench.llm import ScriptedClient
 from songbench.orchestrate import ConfigError, Song, RunConfig, render_sheet
-from songbench.spec import bundled_specs, load_spec, slack_hints, spec_from_dict
+from songbench.spec import InternalRhymeSpec, bundled_specs, load_spec, slack_hints, spec_from_dict
 
 
 def responses():
@@ -35,6 +36,69 @@ def test_second_song_runs_with_source_reference_and_second_line_hook():
     assert "bridge" not in client.calls[2]["messages"][-1]["content"].lower()
     assert r["reference_lyrics"]["sha256"]
     assert render_sheet(r).count("## Refrain") == 2
+
+
+@pytest.mark.parametrize("singers", [2, 3])
+def test_featured_artist_writes_only_their_section(singers):
+    sections = {
+        "chorus": {"label": "Chorus", "sung_by": [1],
+                   "lines": [{"syllables": 4}]},
+        "lead": {"label": "Lead Verse", "singer": 1,
+                 "lines": [{"syllables": 4}]},
+    }
+    replies = ["We watch the light", "The sky is bright"]
+    if singers == 3:
+        sections["second_lead"] = {"singer": 2, "lines": [{"syllables": 4}]}
+        replies.append("You take the road")
+    sections["guest"] = {"label": "Featured Verse", "singer": singers,
+                         "lines": [{"syllables": 4}]}
+    replies.append("I take the train")
+    spec = spec_from_dict({
+        "id": "guest_spot", "title": "Guest Spot", "artist": "Synthetic",
+        "singers": singers, "sections": sections,
+        "generation_order": list(sections),
+        "performance_order": [*sections, "chorus"],
+    })
+    models = [f"provider/voice-{i}" for i in range(1, singers + 1)]
+    client = ScriptedClient([f"<lyrics>{line}</lyrics>" for line in replies])
+    result = Song(RunConfig(models, scenario="none"), client, spec=spec).run()
+    assert result["scores"]["strict_pass"]
+    assert [call["model"] for call in client.calls] == [models[0], *models]
+    assert result["parts"]["guest"]["author"] == singers
+    assert result["parts"]["chorus"]["author"] == 1
+    guest_context = "\n".join(m["content"] for m in client.calls[-1]["messages"])
+    assert "We watch the light" in guest_context
+    assert "The sky is bright" in guest_context
+    assert render_sheet(result).count("## Chorus") == 2
+
+
+def test_targeted_internal_rhyme_survives_snapshot_and_retries(tmp_path):
+    raw = {"id": "acronym_hook", "title": "Letter Game", "artist": "Synthetic",
+           "singers": 1, "generation_order": ["hook"], "performance_order": ["hook", "hook"],
+           "sections": {"hook": {"sung_by": [1], "lines": [{"syllables": 8, "hook": True,
+                        "internal_rhyme": {"word_syllables": 3, "end_word": True}}]}}}
+    path = tmp_path / "song.yaml"
+    path.write_text(yaml.safe_dump(raw))
+    client = ScriptedClient(["<lyrics>See the bright light then GPT</lyrics>",
+                             "<lyrics>Try GPT then LLC</lyrics>"])
+    result = Song(RunConfig(["a/one"], spec=str(path), scenario="none"), client).run()
+    assert result["scores"]["strict_pass"]
+    assert len(client.calls) == 2
+    assert result["turns"][0]["retries"] == 1
+    restored = spec_from_dict(result["spec_snapshot"])
+    assert restored.sections["hook"].lines[0].internal_rhyme == InternalRhymeSpec(3, True)
+    judge = ScriptedClient(['{"singability": 8, "notes": "ok"}'])
+    rubric(result, judge, "b/judge")
+    assert "3-syllable words or acronyms" in judge.calls[0]["messages"][0]["content"]
+
+
+@pytest.mark.parametrize("rule", ["yes", 3, {"word_syllables": 0}, {"word_syllables": True},
+                                  {"word_syllables": 2.5}, {"end_word": "yes"}, {"typo": 3}])
+def test_invalid_internal_rhyme_rules(rule):
+    raw = asdict(load_spec("two_voices"))
+    raw["sections"]["opening"]["lines"][0]["internal_rhyme"] = rule
+    with pytest.raises(ValueError, match="internal_rhyme"):
+        spec_from_dict(raw)
 
 
 def test_song_specific_fixed_chorus_is_used(tmp_path):
@@ -95,6 +159,12 @@ def test_song_listing_and_generated_chorus_dry_run(capsys):
     assert main(["run", "--model", "a/one", "--model", "b/two", "--spec", "two_voices", "--dry-run"]) == 0
     output = capsys.readouterr().out
     assert "Write the refrain" in output
+
+
+def test_check_uses_marked_hook_in_example(capsys):
+    example = Path(__file__).resolve().parents[1] / "examples" / "two_voices.txt"
+    assert main(["check", str(example)]) == 0
+    assert "Issues:" not in capsys.readouterr().out
 
 
 @pytest.mark.parametrize("mutation", ["duplicate_order", "missing_section", "invalid_singer", "invalid_trade", "empty_lines"])

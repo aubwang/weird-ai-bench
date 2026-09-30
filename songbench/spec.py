@@ -10,14 +10,28 @@ import yaml
 
 
 @dataclass
+class InternalRhymeSpec:
+    word_syllables: int | None = None
+    end_word: bool = False
+
+    def __post_init__(self):
+        n = self.word_syllables
+        if n is not None and (type(n) is not int or n < 1):
+            raise ValueError("internal_rhyme word_syllables must be a positive whole number")
+        if not isinstance(self.end_word, bool):
+            raise ValueError("internal_rhyme end_word must be true or false")
+
+
+@dataclass
 class LineSpec:
     syllables: int
     stress: list[int] = field(default_factory=list)
     split: list[int] | None = None
     rhyme: str | None = None
-    internal_rhyme: bool = False
+    internal_rhyme: bool | InternalRhymeSpec = False
     hook: bool = False
     repeats_hook: bool = False
+    refrain: str | None = None  # lines sharing an intentionally repeated phrase or ending
     echo: bool = False
     note: str | None = None
     reference: str | None = None
@@ -89,12 +103,23 @@ class SongSpec:
 
 
 def _line(d: dict) -> LineSpec:
+    d = dict(d)
     known = LineSpec.__dataclass_fields__.keys()
     unknown = set(d) - set(known)
     if unknown:
         raise ValueError(f"unknown line fields: {sorted(unknown)}")
+    ir = d.get("internal_rhyme", False)
+    if isinstance(ir, dict):
+        if set(ir) - {"word_syllables", "end_word"}:
+            raise ValueError("unknown internal_rhyme fields")
+        d["internal_rhyme"] = InternalRhymeSpec(**ir)
+    elif not isinstance(ir, bool):
+        raise ValueError("internal_rhyme must be true, false, or a mapping")
     if d.get("reference") is not None and not isinstance(d["reference"], str):
         raise ValueError("line reference must be text")
+    if d.get("refrain") is not None and (not isinstance(d["refrain"], str) or
+                                         not d["refrain"].strip()):
+        raise ValueError("line refrain must be a nonempty group name")
     _validate_adlibs(d.get("adlibs", []))
     slack = d.get("slack", 0)
     parts = slack if isinstance(slack, list) and len(slack) == 2 else [slack]
@@ -274,6 +299,14 @@ def format_lyric(text: str, adlibs: list[str]) -> str:
     return text + "".join(f" <adlib>{a}</adlib>" for a in adlibs)
 
 
+def describe_internal_rhyme(rule: bool | InternalRhymeSpec) -> str:
+    if isinstance(rule, bool):
+        return "an internal rhyme between two of its words"
+    size = f"{rule.word_syllables}-syllable " if rule.word_syllables else ""
+    ending = ", with one at the end of the line" if rule.end_word else ""
+    return f"a full end-sound rhyme between two different {size}words or acronyms{ending}"
+
+
 def describe_line(ln: LineSpec, idx: int, rhymes: dict[str, RhymeSpec]) -> str:
     """One-line human description of a line's constraints, used in prompts."""
     fewer, more = slack_bounds(ln)
@@ -290,11 +323,13 @@ def describe_line(ln: LineSpec, idx: int, rhymes: dict[str, RhymeSpec]) -> str:
             desc += " (two-syllable rhyme)"
         parts.append(desc)
     if ln.internal_rhyme:
-        parts.append("contains an internal rhyme")
+        parts.append("contains " + describe_internal_rhyme(ln.internal_rhyme))
     if ln.hook:
         parts.append("this is the hook")
     if ln.repeats_hook:
         parts.append("ends with the hook")
+    if ln.refrain:
+        parts.append(f"refrain {ln.refrain}")
     if ln.echo:
         parts.append("followed by an echo of the hook's last word in parentheses")
     if ln.note:
@@ -317,6 +352,14 @@ def describe_section(sec: SectionSpec) -> str:
         kind = "slant rhyme is fine" if r.slant else "full rhyme required"
         if len(idxs) > 1:
             out.append(f"  Rhyme {g}: lines {', '.join(map(str, idxs))} rhyme with each other ({kind}).")
+    refrains: dict[str, list[int]] = {}
+    for i, ln in enumerate(sec.lines, 1):
+        if ln.refrain:
+            refrains.setdefault(ln.refrain, []).append(i)
+    for group, idxs in refrains.items():
+        if len(idxs) > 1:
+            out.append(f"  Refrain {group}: lines {', '.join(map(str, idxs))} reuse a short phrase "
+                       "or ending; the rest of each line can change.")
     return "\n".join(out)
 
 

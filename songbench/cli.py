@@ -224,7 +224,12 @@ def cmd_check(args) -> int:
     if not sections:
         _log("error: give --section, or mark sections with lines like [verse1]")
         return 2
-    hook = sections.get(spec.chorus_key() or "", [None])[0]
+    hook = next(
+        (text for key in spec.generation_order
+         for line, text in zip(spec.sections[key].lines, sections.get(key, []))
+         if line.hook),
+        None,
+    )
     ok = True
     for key, lines in sections.items():
         sec = spec.sections[key]

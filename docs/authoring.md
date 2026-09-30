@@ -29,11 +29,29 @@ sections:
 
 `singers` fixes how many singers the song has; a run gives one model per singer.
 Sections choose `singer: N`, `trade: [1, 2, ...]` for line-by-line exchanges, or
-`sung_by` for the optional shared chorus: `all`, a list such as `[1, 3]`, or `both`
-in a two-singer song. Every singer must sing somewhere. At most one shared chorus
-is supported. Every section appears once in `generation_order`;
+`sung_by` for the chorus: `all`, a list such as `[1]` or `[1, 3]`, or `both`
+in a two-singer song. Every singer must sing somewhere. At most one section
+can use `sung_by`. Every section appears once in `generation_order`;
 `performance_order` can repeat section keys. For a different cast size, write a
 separate template.
+
+### Featured artists and backing vocals
+
+A featured artist is a singer who owns one or more sections. They don't need
+equal time or a part in the chorus. For a lead and a guest, use `singers: 2`,
+assign the lead's sections to `singer: 1`, and the guest verse to `singer: 2`.
+Use `sung_by: [1]` if the lead carries the chorus. A duet with a third artist's
+guest verse uses `singers: 3` and `singer: 3` for that verse.
+
+Each singer gets a model slot, even for a single section. The guest receives
+the sections already written when their turn arrives in `generation_order`.
+You can put the same model in every slot to have it write the whole song.
+
+Section labels describe the part: `Chorus`, `Featured Verse`, or
+`Outro (backing chorus)`. A choir credit doesn't need its own model slot;
+assign its writing to an existing singer. Use `trade` only when you want
+separate turns for individual lines. Document any simplified vocal assignments
+in the template's notes.
 
 Original reference lines provide context, not required output words. Section
 and speaker tags are built automatically. The same reference is used for the
@@ -49,22 +67,32 @@ originality report. Leave `reference` out if no reference should be supplied.
 | `split: [4, 4]` | Pause at the syllable boundary between the two halves |
 | `rhyme: A` | End word belongs to group A within this section |
 | `internal_rhyme: true` | Two words somewhere within the line must rhyme |
+| `internal_rhyme: {word_syllables: 3, end_word: true}` | Two different three-syllable words or acronyms must rhyme on their ending sounds; one must end the line |
 | `hook: true` | This line establishes the hook |
 | `repeats_hook: true` | This line must end with the established hook |
+| `refrain: A` | Lines with the same label intentionally reuse a short phrase or ending; the rest of each line may change |
 | `echo: true` | Prompt guidance to echo the hook's last word; not a separate gate |
 | `note` | Free-text performance guidance |
 | `adlibs: [oh]` | Reference ad-libs, excluded from main-line verification |
 
 In the example, lines 2 and 4 must rhyme **with each other**, not with the
 reference words. Rhyme-group names are arbitrary. Omit `rhyme` to leave an ending
-unconstrained. Identical ending words do not count as a successful rhyme.
+unconstrained. Identical ending words do not count as a successful rhyme unless
+both lines share a `refrain` label. If those lines also share a rhyme group, the
+repeated end word counts as an intentional refrain. The label does not require
+the generated lines to copy a phrase from the reference lyrics.
 
 Under `rhymes`, `slant: false` requires full rhyme; `slant: true` permits the
 verifier's approximate half-rhyme rules. `min_syllables: 2` requests a
 two-syllable rhyme. Slant detection is permissive, including shared unstressed
 endings. It cannot establish how convincing a rhyme will sound when sung.
-Internal rhyme checks any eligible word pair; they do not support named word
-positions or a separate strict/slant setting. Groups do not cross sections.
+`internal_rhyme: true` checks any eligible word pair, including shared sounds
+inside words. The mapping form requires a full rhyme on the words' ending
+sounds. Its optional `word_syllables` sets the length of each word, and
+`end_word: true` requires one of the pair to end the line. Three-syllable words
+can rhyme on just their final syllable; this does not require all three
+syllables to rhyme. Uppercase acronyms absent from the dictionary are read
+letter by letter. Ad-libs cannot supply the rhyme. Groups do not cross sections.
 
 To keep scoring rhyme but stop using it as a retry condition, run with:
 

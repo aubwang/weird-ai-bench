@@ -97,6 +97,18 @@ def test_blind_judging_and_stats():
     assert all(row["first_try_pass"] == 1 for row in gate_stats([r]))
 
 
+def test_judge_is_told_when_repetition_is_a_refrain():
+    spec = load_spec("two_voices")
+    for line in spec.sections["refrain"].lines:
+        line.refrain = "A"
+    result = Song(RunConfig(["a/one", "b/two"]), ScriptedClient(script()), spec=spec).run()
+    judge = ScriptedClient(['{"singability":8,"humor":8,"parody_craft":8,"coherence":8,"interplay":8}'])
+    rubric(result, judge, "c/judge")
+    prompt = judge.calls[0]["messages"][0]["content"]
+    assert "deliberate refrains" in prompt
+    assert "Refrain lines 1, 2" in prompt
+
+
 @pytest.mark.parametrize("n", [10, 100, 200, 1000])
 def test_bt_recovers_majority_at_different_sample_sizes(n):
     comps = [(["a", "c"], ["b", "c"], 1.0)] * (n * 6 // 10)

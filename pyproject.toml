@@ -1,13 +1,35 @@
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "songbench"
 version = "0.1.0"
-description = "LLMs co-write a parody song against a song template; checks meter, stress, and rhyme, and judges the result."
+description = "Benchmark collaborative lyric writing by language models with meter checks and blind judging."
+readme = "README.md"
 requires-python = ">=3.10"
+license = "MIT"
+license-files = ["LICENSE"]
+keywords = ["llm", "benchmark", "lyrics", "multi-agent", "evaluation"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Multimedia :: Sound/Audio",
+    "Topic :: Software Development :: Testing",
+]
 dependencies = ["pronouncing>=0.2", "pyyaml>=6", "httpx>=0.25"]
+
+[project.urls]
+Homepage = "https://github.com/aubwang/songbench"
+Repository = "https://github.com/aubwang/songbench"
+Issues = "https://github.com/aubwang/songbench/issues"
 
 [project.optional-dependencies]
 test = ["pytest>=7"]
