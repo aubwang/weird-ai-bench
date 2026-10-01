@@ -20,7 +20,22 @@ Don't put private files under `songbench/data/`, even gitignored ones: hiding
 them there means naming them in `.gitignore` or `pyproject.toml`, and those
 names are public. Public examples and tests use synthetic text only (the
 `two_voices` template). Before committing, check that nothing staged names a
-private song: `git diff --cached` and `git grep` over the staged tree.
+private song outside the results site: `git diff --cached` and `git grep` over
+the staged tree.
+
+## The published results site
+
+The one exception is the results write-up, published as Weird AI Bench (the
+benchmark's public name) with GitHub Pages from `docs/`: `docs/index.html` and
+`docs/img/`. It may name the real songs and quote lines the models wrote. It
+never shows the original lyrics: each parody line links to the moment in the
+official recording instead, and lines the originality check flags as close to
+the original are left out. Profanity and slurs are starred out.
+
+It's generated, not hand-edited: `docs/local/build_blog.py docs/index.html
+--site --public` (the page template and picks live in `docs/local/`). Rebuild it
+rather than editing the HTML, and keep the original-lyrics rule when changing
+the generator.
 
 ## Tests
 

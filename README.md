@@ -1,5 +1,7 @@
 # songbench
 
+**Results:** [Weird AI Bench, round 2](https://aubwang.github.io/songbench/). Twelve models wrote 288 song parodies; four AI judges ranked them, and two of the models picked their favorite lines.
+
 songbench runs a songwriting experiment with one language model per singer. A YAML song template sets the section order and line constraints; the tool passes the song between models, checks the lyrics, and saves the full run. You can run a single song or compare models across different singer lineups.
 
 The bundled `two_voices` song is made up for this repo, so you can try the checker and preview the prompts without an API key.
