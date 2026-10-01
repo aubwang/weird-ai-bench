@@ -6,11 +6,11 @@ from pathlib import Path
 import pytest
 import yaml
 
-from songbench.cli import main
-from songbench.judge import rubric
-from songbench.llm import ScriptedClient
-from songbench.orchestrate import ConfigError, Song, RunConfig, render_sheet
-from songbench.spec import InternalRhymeSpec, bundled_specs, load_spec, slack_hints, spec_from_dict
+from weird_ai_bench.cli import main
+from weird_ai_bench.judge import rubric
+from weird_ai_bench.llm import ScriptedClient
+from weird_ai_bench.orchestrate import ConfigError, Song, RunConfig, render_sheet
+from weird_ai_bench.spec import InternalRhymeSpec, bundled_specs, load_spec, slack_hints, spec_from_dict
 
 
 def responses():

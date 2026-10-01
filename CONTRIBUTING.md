@@ -1,6 +1,6 @@
-# Contributing to songbench
+# Contributing to weird ai bench
 
-Thanks for helping improve songbench. Bug reports and focused pull requests are
+Thanks for helping improve weird ai bench. Bug reports and focused pull requests are
 welcome. For changes to scoring rules, explain which examples change and why;
 benchmark results can shift even when the CLI still works.
 
@@ -19,8 +19,8 @@ pytest
 To inspect a change without an API key, run:
 
 ```sh
-songbench check examples/two_voices.txt
-songbench run --model demo/first --model demo/second --dry-run
+weird-ai-bench check examples/two_voices.txt
+weird-ai-bench run --model demo/first --model demo/second --dry-run
 ```
 
 Add tests for behavior changes, especially parsing, retry decisions, scoring,

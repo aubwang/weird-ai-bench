@@ -24,4 +24,4 @@ jobs:
       - name: Test
         run: python -m pytest -q
       - name: Check the synthetic example
-        run: songbench check examples/two_voices.txt
+        run: weird-ai-bench check examples/two_voices.txt

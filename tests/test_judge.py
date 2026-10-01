@@ -4,10 +4,10 @@ import json
 
 import pytest
 
-from songbench.judge import (JUDGE_VERSION, _context, _extract_json, _score, _sheet, check_notes, family_overlap,
+from weird_ai_bench.judge import (JUDGE_VERSION, _context, _extract_json, _score, _sheet, check_notes, family_overlap,
                              pairwise, redact_names, rubric, same_family_warning)
-from songbench.llm import ScriptedClient
-from songbench.orchestrate import RunConfig, Song, rescore
+from weird_ai_bench.llm import ScriptedClient
+from weird_ai_bench.orchestrate import RunConfig, Song, rescore
 
 CHORUS = "<lyrics>We watch the light\nWe walk back home</lyrics>"
 OPENING = "<lyrics>The sky is bright</lyrics>"

@@ -7,13 +7,13 @@ from dataclasses import asdict
 import pytest
 import yaml
 
-from songbench.cli import main
-from songbench.judge import pairwise, rubric
-from songbench.leaderboard import fit_additive_bt, gate_stats, group_key
-from songbench.llm import LLMError, ScriptedClient
-from songbench.orchestrate import ConfigError, Song, RunConfig, render_sheet, rescore, save
-from songbench.prompts import parse_lyrics
-from songbench.spec import load_spec, result_spec
+from weird_ai_bench.cli import main
+from weird_ai_bench.judge import pairwise, rubric
+from weird_ai_bench.leaderboard import fit_additive_bt, gate_stats, group_key
+from weird_ai_bench.llm import LLMError, ScriptedClient
+from weird_ai_bench.orchestrate import ConfigError, Song, RunConfig, render_sheet, rescore, save
+from weird_ai_bench.prompts import parse_lyrics
+from weird_ai_bench.spec import load_spec, result_spec
 
 
 CHORUS = "<lyrics>We chase the dawn\nWe head for town</lyrics>"
@@ -165,12 +165,12 @@ def test_empty_chorus_does_not_crash(track, tmp_path):
 @pytest.mark.parametrize("command", ["run", "matrix"])
 @pytest.mark.parametrize("failure", ["api", "json"])
 def test_judge_failure_keeps_song(monkeypatch, tmp_path, command, failure):
-    monkeypatch.setattr("songbench.cli._client", lambda args: ScriptedClient(script()))
+    monkeypatch.setattr("weird_ai_bench.cli._client", lambda args: ScriptedClient(script()))
     def fail_judge(*args):
         if failure == "api":
             raise LLMError("simulated judge outage")
         raise ValueError("invalid judge JSON")
-    monkeypatch.setattr("songbench.judge.rubric", fail_judge)
+    monkeypatch.setattr("weird_ai_bench.judge.rubric", fail_judge)
     args = [command, "--judge", "c/judge", "--out", str(tmp_path)]
     args += (["--model", "a/one", "--model", "b/two"] if command == "run"
              else ["--models", "a/one", "--include-self", "--workers", "1"])

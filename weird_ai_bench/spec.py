@@ -141,7 +141,7 @@ def load_spec(path_or_id: str | Path = "two_voices") -> SongSpec:
         text = p.read_text()
     else:
         text = (
-            resources.files("songbench.data.specs")
+            resources.files("weird_ai_bench.data.specs")
             .joinpath(f"{path_or_id}.yaml")
             .read_text()
         )
@@ -248,7 +248,7 @@ def spec_from_dict(raw: dict) -> SongSpec:
 
 
 def bundled_specs() -> list[str]:
-    return sorted(p.name.removesuffix(".yaml") for p in resources.files("songbench.data.specs").iterdir()
+    return sorted(p.name.removesuffix(".yaml") for p in resources.files("weird_ai_bench.data.specs").iterdir()
                   if p.name.endswith(".yaml"))
 
 
@@ -263,7 +263,7 @@ def load_preset(path_or_id: str | Path) -> dict:
     """Load prewritten sections independently of the song's pacing spec."""
     path = Path(path_or_id).expanduser()
     text = (path.read_text(encoding="utf-8") if path.suffix in (".yaml", ".yml") else
-            resources.files("songbench.data.presets").joinpath(f"{path_or_id}.yaml").read_text())
+            resources.files("weird_ai_bench.data.presets").joinpath(f"{path_or_id}.yaml").read_text())
     raw = yaml.safe_load(text)
     if not isinstance(raw, dict) or not isinstance(raw.get("song"), str):
         raise ValueError("preset needs a song ID and sections")

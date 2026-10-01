@@ -3,12 +3,12 @@
 import pytest
 import yaml
 
-from songbench.cli import main
-from songbench.judge import rubric
-from songbench.leaderboard import group_key
-from songbench.llm import ScriptedClient
-from songbench.orchestrate import ConfigError, RunConfig, Song
-from songbench.scenario import bundled_scenarios, load_scenario
+from weird_ai_bench.cli import main
+from weird_ai_bench.judge import rubric
+from weird_ai_bench.leaderboard import group_key
+from weird_ai_bench.llm import ScriptedClient
+from weird_ai_bench.orchestrate import ConfigError, RunConfig, Song
+from weird_ai_bench.scenario import bundled_scenarios, load_scenario
 
 
 def scenario_file(tmp_path, name="scenario.yaml", **fields):
@@ -29,7 +29,7 @@ def test_scenario_text_replaces_the_built_in_framing(tmp_path):
     path = scenario_file(tmp_path, per_singer={2: "You are the straight man."})
     song = Song(RunConfig(["a/one", "b/two"], scenario=path), ScriptedClient())
     first, second = song.threads[1][0]["content"], song.threads[2][0]["content"]
-    assert first.startswith('A roast set to "Two Voices (example)" by songbench, for 2 singers.')
+    assert first.startswith('A roast set to "Two Voices (example)" by weird ai bench, for 2 singers.')
     assert "straight man" in second and "straight man" not in first
     assert "AI model" not in first and "duet" not in first
 

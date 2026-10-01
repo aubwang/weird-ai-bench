@@ -5,11 +5,11 @@ from dataclasses import asdict
 
 import pytest
 
-from songbench.cli import main
-from songbench.llm import ScriptedClient
-from songbench.orchestrate import RunConfig, Song, rescore, save
-from songbench.spec import load_spec
-from songbench.verify import GATES, SCORING_VERSION, verify_section
+from weird_ai_bench.cli import main
+from weird_ai_bench.llm import ScriptedClient
+from weird_ai_bench.orchestrate import RunConfig, Song, rescore, save
+from weird_ai_bench.spec import load_spec
+from weird_ai_bench.verify import GATES, SCORING_VERSION, verify_section
 
 CHORUS = "<lyrics>We chase the dawn\nWe head for town</lyrics>"
 BAD = "<lyrics>A moon stays very high</lyrics>"

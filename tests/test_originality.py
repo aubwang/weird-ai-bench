@@ -2,10 +2,10 @@
 
 from dataclasses import asdict
 
-from songbench.llm import ScriptedClient
-from songbench.orchestrate import RunConfig, Song, reference_lines, rescore
-from songbench.spec import LineSpec, SectionSpec, load_spec
-from songbench.verify import GATES, SCORING_VERSION, verify_section
+from weird_ai_bench.llm import ScriptedClient
+from weird_ai_bench.orchestrate import RunConfig, Song, reference_lines, rescore
+from weird_ai_bench.spec import LineSpec, SectionSpec, load_spec
+from weird_ai_bench.verify import GATES, SCORING_VERSION, verify_section
 
 REFERENCE = ["We watch the light", "We walk back home", "The sky is bright"]
 COPY = ["<lyrics>We watch the light\nWe walk back home</lyrics>",

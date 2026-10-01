@@ -1,8 +1,8 @@
 """Verifier tests on synthetic, independently specified lines."""
 
-from songbench.phonetics import tokenize, word_info
-from songbench.spec import InternalRhymeSpec, LineSpec, RhymeSpec, SectionSpec, describe_line
-from songbench.verify import analyze_line, internal_rhyme, rhyme_level, verify_section
+from weird_ai_bench.phonetics import tokenize, word_info
+from weird_ai_bench.spec import InternalRhymeSpec, LineSpec, RhymeSpec, SectionSpec, describe_line
+from weird_ai_bench.verify import analyze_line, internal_rhyme, rhyme_level, verify_section
 
 
 def test_syllables_stress_and_annotations():

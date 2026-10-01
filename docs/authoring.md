@@ -103,7 +103,7 @@ To keep scoring rhyme but stop using it as a retry condition, run with:
 Changing the YAML changes the task requirements. Changing `--gates` changes
 which failures cause retries. `--track freeform` never retries. `--tolerance 1`
 allows a one-syllable count deviation on every line; a line's `slack` applies
-instead where it's larger. `songbench spec` suggests `slack` where sections of
+instead where it's larger. `weird-ai-bench spec` suggests `slack` where sections of
 the same length disagree on counts, since a melody that fits both is looser there. Record these choices when comparing
 benchmark results; automatic grouping does not cover every generation setting.
 
@@ -150,9 +150,9 @@ tags always mean an uncounted ad-lib. Keep tags on the main lyric line.
 ## Preview and run
 
 ```sh
-songbench songs
-songbench spec --spec songs/local/night_walk.yaml
-songbench run --model provider/model-a --scenario none \
+weird-ai-bench songs
+weird-ai-bench spec --spec songs/local/night_walk.yaml
+weird-ai-bench run --model provider/model-a --scenario none \
   --spec songs/local/night_walk.yaml --dry-run
 ```
 

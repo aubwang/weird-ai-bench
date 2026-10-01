@@ -6,12 +6,12 @@ from collections import Counter
 import pytest
 import yaml
 
-from songbench.cli import lineups, main
-from songbench.judge import rubric
-from songbench.leaderboard import group_key
-from songbench.llm import ScriptedClient
-from songbench.orchestrate import ConfigError, RunConfig, Song, render_sheet
-from songbench.spec import spec_from_dict
+from weird_ai_bench.cli import lineups, main
+from weird_ai_bench.judge import rubric
+from weird_ai_bench.leaderboard import group_key
+from weird_ai_bench.llm import ScriptedClient
+from weird_ai_bench.orchestrate import ConfigError, RunConfig, Song, render_sheet
+from weird_ai_bench.spec import spec_from_dict
 
 
 def trio_raw():
@@ -148,7 +148,7 @@ def test_matrix_runs_every_lineup_of_a_trio(tmp_path, monkeypatch, capsys):
     assert main(["matrix", "--models", "a/one,b/two,c/three", "--spec", spec, "--dry-run"]) == 0
     assert len(capsys.readouterr().out.splitlines()) == 6
     assert main(["matrix", "--models", "a/one,b/two", "--spec", spec, "--dry-run"]) == 2
-    monkeypatch.setattr("songbench.cli._client", lambda args: ScriptedClient(list(TRIO)))
+    monkeypatch.setattr("weird_ai_bench.cli._client", lambda args: ScriptedClient(list(TRIO)))
     out = tmp_path / "runs"
     assert main(["matrix", "--models", "a/one,b/two,c/three", "--spec", spec, "--max-lineups", "2",
                  "--workers", "1", "--out", str(out)]) == 0
@@ -171,7 +171,7 @@ def test_cli_takes_one_model_per_singer(tmp_path, capsys):
 
 
 def test_writers_are_told_the_judging_criteria(tmp_path):
-    from songbench.prompts import judging_text
+    from weird_ai_bench.prompts import judging_text
     assert "respond to each other" in judging_text(spec_from_dict(trio_raw()))
     solo = judging_text(spec_from_dict(solo_raw()))
     assert "melody" in solo and "funny" in solo and "respond" not in solo
