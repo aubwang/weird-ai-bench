@@ -122,11 +122,13 @@ The model IDs above are placeholders; choose available IDs from [OpenRouter](htt
 
 `stats` reports, per template, model, track, and guidance: songs, failed songs, line adherence, first-try pass rate per turn, final pass rate, and retries per song. A self-duet counts as one song.
 
-`leaderboard` compares songs written under the same settings, two at a time. Settings include the template, scenario text, reference lyrics, supplied sections, names, chorus, track, guidance, tolerance, temperature, effort, and on the strict track the gates and retries. Pairs are picked so every song is compared about equally often, up to `--max-pairs`, cached pairs first. Each pair is judged twice with the order swapped, and a disagreement counts as a tie, which cancels position bias; the output reports how often that happened. A song that failed mid-run loses to every finished song without a judge call.
+`leaderboard` compares songs written under the same settings, two at a time. Settings include the template, scenario text, reference lyrics, supplied sections, names, chorus, track, guidance, tolerance, temperature, effort, and on the strict track the gates and retries. Pairs are picked so every song is compared about equally often, up to `--max-pairs`, chosen without regard to which pairs are cached or failed. Each pair is judged twice with the order swapped, and a disagreement counts as a tie, which cancels position bias; the output reports how often that happened. A song that failed mid-run loses to every finished song without a judge call.
 
-Results are fitted with a weighted additive Bradley-Terry model: a song's strength is the sum of its singers' model strengths, each weighted by that singer's share of the generated lines as performed. That's what lets a benchmark of shared songs rank individual models, and it credits a repeated chorus to whoever wrote it. The fit puts a normal prior on each strength (`--prior-sd`, default 1 logit, about 170 Elo), so a model that wins every game still gets a finite rating. The 95% intervals come from `--bootstrap` resamples of the songs within each group; treat models with overlapping intervals as tied. Win rate counts only the games where a model's share differed between the two songs. Use at least three models or `--include-self`: with two, A×B and B×A have the same singers and differ only in who wrote which part, so the leaderboard warns that its ranking rests on that alone. Judgments are cached in `judgments.jsonl`, keyed by the judge prompt version, so re-running only pays for new pairs.
+Results are fitted with a weighted additive Bradley-Terry model: a song's strength is the sum of its singers' model strengths, each weighted by that singer's share of the generated lines as performed. That's what lets a benchmark of shared songs rank individual models, and it credits a repeated chorus to whoever wrote it. The fit puts a normal prior on each strength (`--prior-sd`, default 1 logit, about 170 Elo), so a model that wins every game still gets a finite rating. The 95% intervals come from `--bootstrap` resamples of the songs within each group; treat models with overlapping intervals as tied. Win rate counts only the games where a model's share differed between the two songs. Use at least three models or `--include-self`: with two, A×B and B×A have the same singers and differ only in who wrote which part, so the leaderboard warns that its ranking rests on that alone. Judgments are cached in `judgments.jsonl`, keyed by the judge prompt version, so re-running only pays for new pairs. Next to each model's rating, the table shows its `meter`: the mean automated line adherence over its songs, with unwritten lines counted as 0. It's reported beside the judged ranking, not folded into it.
 
-The judge is blind: it sees "Singer 1", "Singer 2", and so on, never model ids. Model, persona, and family names written into the lyrics ("Claude", "ChatGPT's") are replaced with the matching "Singer N" before judging, or with "a singer" when two singers share a family. The judge also sees the reference lyrics, to judge parody craft. Pick a judge from a different family than the singers; songbench warns when it isn't.
+The judge is blind: it sees "Singer 1", "Singer 2", and so on, never model ids. Model, persona, and family names written into the lyrics ("Claude", "ChatGPT's") are replaced with the matching "Singer N" before judging, or with "a singer" when two singers share a family. The judge also sees the reference lyrics, to judge parody craft, and after each song the automated check results: how many generated lines hit their syllable targets, and which lines missed a count, a rhyme, or copied the original. It's told the checker can mispronounce, so it weighs each miss by how much it would hurt a performance. Assigned character names in the scenario (`--names assigned`) stay visible in the setup, since every song in the group shares them; they're still redacted in the lyrics. Pick a judge from a different family than the singers; songbench warns when it isn't.
+
+Repeat `--judge` to use a panel. Each pair is judged by the panel members that share no family with any singer in either song, and the pair's score is their average. If every member conflicts, the whole panel judges it and the output warns. With judges from three families, every pair of songs has at least one judge outside its families. The output reports how often the judges on a shared pair agreed.
 
 Rubric criteria (1 to 10): singability, humor, parody craft, coherence, and interplay (skipped for solo songs). The judge can't hear the song, so `singability_blended` averages its score with the automated meter score.
 
@@ -192,6 +194,28 @@ check. Keep local source templates under `songs/local/`, which is gitignored;
 the original text is still included in local run snapshots and model requests.
 
 New runs embed the resolved template, so rendering and judging still work after the source YAML is changed or removed. Leaderboard comparisons group runs by the full template, not just its ID.
+
+## Export a chart
+
+Save the pairwise leaderboard, then render it as PNG and SVG:
+
+```sh
+uv run songbench leaderboard runs/ --judge provider/judge \
+  --json-out runs/leaderboard.json
+uv run --extra plot python -m songbench.chart \
+  --input runs/leaderboard.json --out runs/leaderboard-chart
+```
+
+The chart uses a 0–100 preference index: the fitted probability of beating a
+reference opponent with strength zero (1000 Elo). A score of 50 means equal
+strength to that reference. It is relative to the evaluated field, not a
+percentage of correct lyrics or a score comparable across different studies.
+Intervals transform the leaderboard's bootstrap bounds onto the same scale.
+They describe uncertainty conditional on the tested songs. Meter accuracy
+remains a separate result from `songbench stats`.
+
+To preview the layout without model calls, use `--demo` instead of `--input`.
+The preview uses fictional contestants and is visibly labeled synthetic.
 
 ## Private files
 

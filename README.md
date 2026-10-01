@@ -62,7 +62,7 @@ songbench stats runs/
 songbench leaderboard runs/ --judge provider/independent-judge
 ```
 
-`matrix` tries each model in each singer slot. `stats` needs no judge; `leaderboard` asks a judge to compare songs in both presentation orders, then fits an additive Bradley–Terry model to estimate each model's strength, with a 95% interval. Use at least three models (or `--include-self`): with two, every song has the same pair of singers, and only the split of parts between them tells the songs apart. The IDs above are placeholders; use available models, and choose a judge from a different model family than the singers.
+`matrix` tries each model in each singer slot. `stats` needs no judge; `leaderboard` asks a judge to compare songs in both presentation orders, then fits an additive Bradley–Terry model to estimate each model's strength, with a 95% interval. Use at least three models (or `--include-self`): with two, every song has the same pair of singers, and only the split of parts between them tells the songs apart. The IDs above are placeholders; use available models, and choose a judge from a different model family than the singers, or repeat `--judge` for a panel from several families, where each pair skips the judges from its own singers' families.
 
 The [CLI reference](docs/reference.md) covers the other settings, judging, and scoring rules.
 

@@ -33,6 +33,9 @@ Issues = "https://github.com/aubwang/songbench/issues"
 
 [project.optional-dependencies]
 test = ["pytest>=7"]
+plot = [
+    "matplotlib>=3.10.9",
+]
 
 [project.scripts]
 songbench = "songbench.cli:main"

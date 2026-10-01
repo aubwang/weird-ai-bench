@@ -263,7 +263,7 @@ def test_flip_rate_counts_disagreeing_votes(tmp_path, monkeypatch):
     assert out["flip_rate"] == 0.5
 
 
-def test_pair_selection_is_balanced_and_prefers_cached(tmp_path, monkeypatch):
+def test_pair_selection_is_balanced_and_reuses_cached(tmp_path, monkeypatch):
     seen = []
 
     def fake(a, b, client, judge):
@@ -287,6 +287,18 @@ def test_pair_selection_is_balanced_and_prefers_cached(tmp_path, monkeypatch):
     before = len(seen)
     out = leaderboard(runs, None, "j/judge", cache, max_pairs=18, seed=3, bootstrap=0)
     assert out["pairs"] == 18 and len(seen) - before == 6
+
+
+def test_failed_runs_do_not_dominate_comparison_schedule(tmp_path, monkeypatch):
+    a_wins(monkeypatch)
+    runs = [fake_run(f"r{i}", [f"vendor/m{i}"] * 2) for i in range(12)]
+    cache = tmp_path / "c.jsonl"
+    before = leaderboard(runs, None, "j/judge", cache, max_pairs=24, seed=7, bootstrap=0)
+    runs[0]["failed"] = {"error": "API failure"}
+    after = leaderboard(runs, None, "j/judge", cache, max_pairs=24, seed=7, bootstrap=0)
+    pairs = lambda board: {frozenset((r["a"], r["b"])) for r in board["records"]}
+    assert pairs(before) == pairs(after)
+    assert after["forfeits"] <= 5
 
 
 def test_bootstrap_brackets_the_estimate_and_can_be_disabled(tmp_path, monkeypatch):
@@ -322,6 +334,65 @@ def test_gate_stats_counts_a_self_duet_once_and_keys_by_spec():
     assert by["a/x"]["songs"] == 2 and by["a/x"]["failed"] == 1
     assert by["b/y"]["songs"] == 1 and by["b/y"]["failed"] == 1
     assert by["a/x"]["retries_per_song"] == 1.0
-    assert by["a/x"]["first_try_pass"] == 1.0
+    # The failed song's 3 singer-1 turns (chorus, opening, a trade line) count; only 1 was written.
+    assert by["a/x"]["first_try_pass"] == 3 / 5
     lone = gate_stats([solo])
     assert lone[0]["songs"] == 1 and lone[0]["failed"] == 0
+
+
+def test_panel_skips_judges_from_the_singers_families(tmp_path, monkeypatch):
+    seen = []
+
+    def fake(a, b, client, judge):
+        seen.append((judge, frozenset((a["id"], b["id"]))))
+        win = "a" if judge == "c/judge" else "b"
+        return {"a": a["id"], "b": b["id"], "winner": win, "score_a": float(win == "a"),
+                "votes": [win, win], "judge": judge, "judge_version": JUDGE_VERSION}
+
+    monkeypatch.setattr(lb, "pairwise", fake)
+    runs = [fake_run("r0", ["a/x", "a/x"]), fake_run("r1", ["b/y", "b/y"])]
+    out = leaderboard(runs, None, ["a/judge", "c/judge", "d/judge"], tmp_path / "c.jsonl",
+                      bootstrap=0)
+    assert sorted(j for j, _ in seen) == ["c/judge", "d/judge"]
+    assert out["judges"] == ["a/judge", "c/judge", "d/judge"] and out["judge"].startswith("panel:")
+    assert out["judge_agreement"] == 0.0  # c and d split, so the pair counts as even
+    assert {r["model"]: r["win_rate"] for r in out["table"]} == {"a/x": 0.5, "b/y": 0.5}
+
+
+def test_panel_falls_back_to_everyone_when_all_conflict(tmp_path, monkeypatch):
+    a_wins(monkeypatch)
+    runs = [fake_run("r0", ["a/x", "a/x"]), fake_run("r1", ["b/y", "b/y"])]
+    out = leaderboard(runs, None, ["a/judge", "b/judge"], tmp_path / "c.jsonl", bootstrap=0)
+    assert {r["judge"] for r in out["records"]} == {"a/judge", "b/judge"}
+    assert any("whole panel" in w for w in out["warnings"])
+
+
+def test_table_reports_meter_beside_elo(tmp_path, monkeypatch):
+    a_wins(monkeypatch)
+    runs = [fake_run("r0", ["a/x", "a/x"]), fake_run("r1", ["b/y", "b/y"])]
+    runs[1]["scores"]["by_singer"]["1"]["adherence"] = 0.5
+    out = leaderboard(runs, None, "j/judge", tmp_path / "c.jsonl", bootstrap=0)
+    assert {r["model"]: r["meter"] for r in out["table"]} == {"a/x": 1.0, "b/y": 0.75}
+
+
+def test_fixed_schedule_is_used_as_given(tmp_path, monkeypatch):
+    a_wins(monkeypatch)
+    runs = [fake_run(f"r{i}", [f"vendor/m{i}"] * 2) for i in range(4)]
+    out = leaderboard(runs, None, "j/judge", tmp_path / "c.jsonl", bootstrap=0,
+                      pairs=[("r0", "r1"), ("r2", "r3"), ("r0", "r1")])
+    assert [(r["a"], r["b"]) for r in out["records"]] == [("r0", "r1"), ("r2", "r3"), ("r0", "r1")]
+    other = fake_run("x", ["vendor/m9"] * 2, track="freeform")
+    with pytest.raises(ValueError, match="crosses groups"):
+        leaderboard(runs + [other], None, "j/judge", tmp_path / "c.jsonl", bootstrap=0,
+                    pairs=[("r0", "x")])
+
+
+def test_cached_only_skips_missing_judgments(tmp_path, monkeypatch):
+    a_wins(monkeypatch)
+    runs = [fake_run(f"r{i}", [f"vendor/m{i}"] * 2) for i in range(3)]
+    cache = tmp_path / "c.jsonl"
+    leaderboard(runs, None, "j/judge", cache, bootstrap=0, pairs=[("r0", "r1")])
+    monkeypatch.setattr(lb, "pairwise", lambda *a: pytest.fail("judged a pair"))
+    out = leaderboard(runs, None, "j/judge", cache, bootstrap=0, cached_only=True,
+                      pairs=[("r0", "r1"), ("r1", "r2")])
+    assert out["pairs"] == 1 and any("left out" in w for w in out["warnings"])
