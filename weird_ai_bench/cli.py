@@ -1,4 +1,4 @@
-"""songbench command line."""
+"""weird-ai-bench command line."""
 
 from __future__ import annotations
 
@@ -349,7 +349,7 @@ def cmd_stats(args) -> int:
     versions = sorted({r.get("scoring_version", 1) for r in runs})
     if len(versions) > 1:
         _log(f"error: these runs were scored under different rules (versions "
-             f"{', '.join(map(str, versions))}); run `songbench rescore` on them first")
+             f"{', '.join(map(str, versions))}); run `weird-ai-bench rescore` on them first")
         return 2
     rows = gate_stats(runs)
     if not rows:
@@ -438,7 +438,7 @@ def cmd_scenarios(args) -> int:
 
 
 def main(argv=None) -> int:
-    ap = argparse.ArgumentParser(prog="songbench", description="Parody song benchmark for LLMs.")
+    ap = argparse.ArgumentParser(prog="weird-ai-bench", description="Parody song benchmark for LLMs.")
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     p = sub.add_parser("run", help="write one song")

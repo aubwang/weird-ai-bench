@@ -6,12 +6,12 @@ from dataclasses import asdict
 import pytest
 import yaml
 
-from songbench.cli import main
-from songbench.judge import rubric
-from songbench.leaderboard import group_key
-from songbench.llm import ScriptedClient
-from songbench.orchestrate import ConfigError, Song, RunConfig, save
-from songbench.spec import load_preset, load_spec
+from weird_ai_bench.cli import main
+from weird_ai_bench.judge import rubric
+from weird_ai_bench.leaderboard import group_key
+from weird_ai_bench.llm import ScriptedClient
+from weird_ai_bench.orchestrate import ConfigError, Song, RunConfig, save
+from weird_ai_bench.spec import load_preset, load_spec
 
 
 def preset_file(tmp_path, sections, song="two_voices", name="preset.yaml"):

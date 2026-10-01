@@ -5,11 +5,11 @@ from dataclasses import asdict
 import pytest
 import yaml
 
-from songbench.cli import main
-from songbench.leaderboard import gate_stats, group_key
-from songbench.llm import ScriptedClient
-from songbench.orchestrate import ConfigError, RunConfig, Song
-from songbench.spec import load_spec
+from weird_ai_bench.cli import main
+from weird_ai_bench.leaderboard import gate_stats, group_key
+from weird_ai_bench.llm import ScriptedClient
+from weird_ai_bench.orchestrate import ConfigError, RunConfig, Song
+from weird_ai_bench.spec import load_spec
 
 SCRIPT = ["<lyrics>We chase the dawn\nWe head for town</lyrics>",
           "<lyrics>The moon is low</lyrics>",

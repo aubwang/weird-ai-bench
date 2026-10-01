@@ -1,4 +1,4 @@
-"""Export a ranked preference chart: python -m songbench.chart --help."""
+"""Export a ranked preference chart: python -m weird_ai_bench.chart --help."""
 
 from __future__ import annotations
 
@@ -35,8 +35,8 @@ def demo_data() -> dict:
     return {"demo": True, "judge": "Example judge", "pairs": 0, "table": table}
 
 
-def render(data: dict, out: Path, title: str = "Songbench Parody Index",
-           brand: str = "SONGBENCH") -> list[Path]:
+def render(data: dict, out: Path, title: str = "weird ai bench parody index",
+           brand: str = "weird ai bench") -> list[Path]:
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
@@ -93,7 +93,7 @@ def render(data: dict, out: Path, title: str = "Songbench Parody Index",
         display = (data.get("labels") or {}).get(row["model"]) or (name or provider).replace("-", " ")
         labels.append(display + "\n" + provider)
     ax.set_xticks(range(len(rows)), labels, rotation=53, ha="right", color="#252525")
-    fig.text(.95, .775, brand.upper(), ha="right", color="#777777", fontsize=11, weight="bold")
+    fig.text(.95, .775, brand, ha="right", color="#777777", fontsize=11, weight="bold")
     fig.text(.06, .09, "Index = estimated win probability (%) against a 1000-Elo reference opponent.",
              fontsize=10, color="#666666")
     intervals = ("Whiskers: illustrative intervals." if is_demo else
@@ -121,8 +121,8 @@ def main(argv=None) -> int:
     source.add_argument("--input", type=Path, help="leaderboard JSON from --json-out")
     source.add_argument("--demo", action="store_true", help="clearly labeled fictional chart")
     parser.add_argument("--out", type=Path, default=Path("runs/leaderboard-chart"), help="output stem for PNG/SVG")
-    parser.add_argument("--title", default="Songbench Parody Index")
-    parser.add_argument("--brand", default="SONGBENCH", help="watermark in the top right")
+    parser.add_argument("--title", default="weird ai bench parody index")
+    parser.add_argument("--brand", default="weird ai bench", help="watermark in the top right")
     args = parser.parse_args(argv)
     data = demo_data() if args.demo else json.loads(args.input.read_text(encoding="utf-8"))
     try:

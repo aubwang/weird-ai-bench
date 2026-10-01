@@ -22,8 +22,8 @@ Start with the [README](../README.md) for setup and a short walkthrough.
 ## Scenarios
 
 The system prompt has no built-in framing. The scenario file supplies it, and
-songbench adds only mechanics: the cast of singers, the output-format rules, and
-the song's reference lyrics. `songbench scenarios` lists the bundled ones:
+weird ai bench adds only mechanics: the cast of singers, the output-format rules, and
+the song's reference lyrics. `weird-ai-bench scenarios` lists the bundled ones:
 `each_other` (the singers address each other) and `none` (no guidance about who
 they address). Keep your own in `scenarios/local/`, which is gitignored.
 
@@ -96,22 +96,22 @@ The prompts are identical across the two tracks, so any difference between a mod
 ## Check your own lyrics
 
 ```sh
-songbench check mylyrics.txt            # sections marked [opening], [refrain], [exchange], [ending]
-songbench check - --section opening < opening.txt
-songbench spec                          # print the song map
+weird-ai-bench check mylyrics.txt            # sections marked [opening], [refrain], [exchange], [ending]
+weird-ai-bench check - --section opening < opening.txt
+weird-ai-bench spec                          # print the song map
 ```
 
 ## Benchmark
 
 ```sh
 # Every ordered lineup, both tracks, two songs each
-songbench matrix --models provider/model-a,provider/model-b,provider/model-c \
+weird-ai-bench matrix --models provider/model-a,provider/model-b,provider/model-c \
   --scenarios each_other,none --tracks strict,freeform --samples 2 --out runs/
 
-songbench stats runs/                                   # checks only, no judge calls
-songbench rescore runs/                                 # re-check saved runs after a rules change
-songbench leaderboard runs/ --judge provider/independent-judge # pairwise judging -> Elo
-songbench judge runs/*.json --judge provider/independent-judge # rubric scores per song
+weird-ai-bench stats runs/                                   # checks only, no judge calls
+weird-ai-bench rescore runs/                                 # re-check saved runs after a rules change
+weird-ai-bench leaderboard runs/ --judge provider/independent-judge # pairwise judging -> Elo
+weird-ai-bench judge runs/*.json --judge provider/independent-judge # rubric scores per song
 ```
 
 The model IDs above are placeholders; choose available IDs from [OpenRouter](https://openrouter.ai/models) before running them.
@@ -126,7 +126,7 @@ The model IDs above are placeholders; choose available IDs from [OpenRouter](htt
 
 Results are fitted with a weighted additive Bradley-Terry model: a song's strength is the sum of its singers' model strengths, each weighted by that singer's share of the generated lines as performed. That's what lets a benchmark of shared songs rank individual models, and it credits a repeated chorus to whoever wrote it. The fit puts a normal prior on each strength (`--prior-sd`, default 1 logit, about 170 Elo), so a model that wins every game still gets a finite rating. The 95% intervals come from `--bootstrap` resamples of the songs within each group; treat models with overlapping intervals as tied. Win rate counts only the games where a model's share differed between the two songs. Use at least three models or `--include-self`: with two, A×B and B×A have the same singers and differ only in who wrote which part, so the leaderboard warns that its ranking rests on that alone. Judgments are cached in `judgments.jsonl`, keyed by the judge prompt version, so re-running only pays for new pairs. Next to each model's rating, the table shows its `meter`: the mean automated line adherence over its songs, with unwritten lines counted as 0. It's reported beside the judged ranking, not folded into it.
 
-The judge is blind: it sees "Singer 1", "Singer 2", and so on, never model ids. Model, persona, and family names written into the lyrics ("Claude", "ChatGPT's") are replaced with the matching "Singer N" before judging, or with "a singer" when two singers share a family. The judge also sees the reference lyrics, to judge parody craft, and after each song the automated check results: how many generated lines hit their syllable targets, and which lines missed a count, a rhyme, or copied the original. It's told the checker can mispronounce, so it weighs each miss by how much it would hurt a performance. Assigned character names in the scenario (`--names assigned`) stay visible in the setup, since every song in the group shares them; they're still redacted in the lyrics. Pick a judge from a different family than the singers; songbench warns when it isn't.
+The judge is blind: it sees "Singer 1", "Singer 2", and so on, never model ids. Model, persona, and family names written into the lyrics ("Claude", "ChatGPT's") are replaced with the matching "Singer N" before judging, or with "a singer" when two singers share a family. The judge also sees the reference lyrics, to judge parody craft, and after each song the automated check results: how many generated lines hit their syllable targets, and which lines missed a count, a rhyme, or copied the original. It's told the checker can mispronounce, so it weighs each miss by how much it would hurt a performance. Assigned character names in the scenario (`--names assigned`) stay visible in the setup, since every song in the group shares them; they're still redacted in the lyrics. Pick a judge from a different family than the singers; weird ai bench warns when it isn't.
 
 Repeat `--judge` to use a panel. Each pair is judged by the panel members that share no family with any singer in either song, and the pair's score is their average. If every member conflicts, the whole panel judges it and the output warns. With judges from three families, every pair of songs has at least one judge outside its families. The output reports how often the judges on a shared pair agreed.
 
@@ -145,14 +145,14 @@ Known limits: dictionary stress can't know how a singer will phrase a line, so a
 
 ## Adding a song
 
-List bundled templates with `songbench songs`. Select one by ID, or pass a YAML path:
+List bundled templates with `weird-ai-bench songs`. Select one by ID, or pass a YAML path:
 
 ```sh
-songbench spec --spec two_voices
-songbench run --model provider/model-a --model provider/model-b --spec songs/local/my-song.yaml
+weird-ai-bench spec --spec two_voices
+weird-ai-bench run --model provider/model-a --model provider/model-b --spec songs/local/my-song.yaml
 ```
 
-Copy `songbench/data/specs/two_voices.yaml` as a starting point. It demonstrates
+Copy `weird_ai_bench/data/specs/two_voices.yaml` as a starting point. It demonstrates
 the unified format: original source text and pacing constraints live on the same
 line entry. For example:
 
@@ -200,9 +200,9 @@ New runs embed the resolved template, so rendering and judging still work after 
 Save the pairwise leaderboard, then render it as PNG and SVG:
 
 ```sh
-uv run songbench leaderboard runs/ --judge provider/judge \
+uv run weird-ai-bench leaderboard runs/ --judge provider/judge \
   --json-out runs/leaderboard.json
-uv run --extra plot python -m songbench.chart \
+uv run --extra plot python -m weird_ai_bench.chart \
   --input runs/leaderboard.json --out runs/leaderboard-chart
 ```
 
@@ -212,7 +212,7 @@ strength to that reference. It is relative to the evaluated field, not a
 percentage of correct lyrics or a score comparable across different studies.
 Intervals transform the leaderboard's bootstrap bounds onto the same scale.
 They describe uncertainty conditional on the tested songs. Meter accuracy
-remains a separate result from `songbench stats`.
+remains a separate result from `weird-ai-bench stats`.
 
 To preview the layout without model calls, use `--demo` instead of `--input`.
 The preview uses fictional contestants and is visibly labeled synthetic.

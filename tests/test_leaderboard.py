@@ -7,12 +7,12 @@ from dataclasses import asdict
 
 import pytest
 
-from songbench import leaderboard as lb
-from songbench.judge import JUDGE_VERSION
-from songbench.leaderboard import fit_additive_bt, gate_stats, group_key, leaderboard, singer_weights
-from songbench.llm import ScriptedClient
-from songbench.orchestrate import RunConfig, Song
-from songbench.spec import load_spec
+from weird_ai_bench import leaderboard as lb
+from weird_ai_bench.judge import JUDGE_VERSION
+from weird_ai_bench.leaderboard import fit_additive_bt, gate_stats, group_key, leaderboard, singer_weights
+from weird_ai_bench.llm import ScriptedClient
+from weird_ai_bench.orchestrate import RunConfig, Song
+from weird_ai_bench.spec import load_spec
 
 SPEC = asdict(load_spec("two_voices"))
 SCENARIO = {"id": "s", "text": "a setup", "per_singer": {}}

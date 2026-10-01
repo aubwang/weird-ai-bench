@@ -81,7 +81,7 @@ def load_scenario(path_or_id: str | Path = "each_other") -> Scenario:
         text = p.read_text(encoding="utf-8")
     else:
         try:
-            text = resources.files("songbench.data.scenarios").joinpath(f"{path_or_id}.yaml").read_text()
+            text = resources.files("weird_ai_bench.data.scenarios").joinpath(f"{path_or_id}.yaml").read_text()
         except FileNotFoundError:
             raise ValueError(f"no bundled scenario {str(path_or_id)!r}; "
                              f"choose from {', '.join(bundled_scenarios())} or pass a YAML path") from None
@@ -89,5 +89,5 @@ def load_scenario(path_or_id: str | Path = "each_other") -> Scenario:
 
 
 def bundled_scenarios() -> list[str]:
-    return sorted(p.name.removesuffix(".yaml") for p in resources.files("songbench.data.scenarios").iterdir()
+    return sorted(p.name.removesuffix(".yaml") for p in resources.files("weird_ai_bench.data.scenarios").iterdir()
                   if p.name.endswith(".yaml"))

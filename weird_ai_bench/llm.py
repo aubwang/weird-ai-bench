@@ -14,7 +14,7 @@ DEFAULT_MAX_TOKENS = 32000  # reasoning models can spend 8k+ thinking before the
 
 
 def _endpoint(base: str | None) -> str:
-    """OpenRouter by default; SONGBENCH_BASE_URL points at any OpenAI-compatible API."""
+    """OpenRouter by default; WEIRD_AI_BENCH_BASE_URL points at any OpenAI-compatible API."""
     return base.rstrip("/") + "/chat/completions" if base else OPENROUTER_URL
 
 
@@ -45,14 +45,14 @@ class OpenRouterClient:
     _http: httpx.Client | None = field(default=None, repr=False)
 
     def __post_init__(self):
-        base = os.environ.get("SONGBENCH_BASE_URL")
+        base = os.environ.get("WEIRD_AI_BENCH_BASE_URL")
         if base:
-            self.api_key = self.api_key or os.environ.get("SONGBENCH_API_KEY")
+            self.api_key = self.api_key or os.environ.get("WEIRD_AI_BENCH_API_KEY")
         else:
             self.api_key = (self.api_key or os.environ.get("OPENROUTER_API_KEY")
-                            or os.environ.get("SONGBENCH_API_KEY"))
+                            or os.environ.get("WEIRD_AI_BENCH_API_KEY"))
         if not self.api_key:
-            key_name = "SONGBENCH_API_KEY" if base else "OPENROUTER_API_KEY"
+            key_name = "WEIRD_AI_BENCH_API_KEY" if base else "OPENROUTER_API_KEY"
             raise LLMError(f"Set {key_name} to call models.")
         self.url = _endpoint(base)
         self._http = httpx.Client(timeout=self.timeout_s)
@@ -72,7 +72,7 @@ class OpenRouterClient:
             body["reasoning"] = {"effort": self.effort}
         headers = {
             "Authorization": f"Bearer {self.api_key}",
-            "X-Title": "songbench",
+            "X-Title": "weird-ai-bench",
         }
         delay = 2.0
         last_err = ""

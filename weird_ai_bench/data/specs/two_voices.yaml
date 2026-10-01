@@ -2,7 +2,7 @@
 # Source lyrics and pacing constraints share the same line entries.
 id: two_voices
 title: Two Voices (example)
-artist: songbench
+artist: weird ai bench
 singers: 2
 generation_order: [refrain, opening, exchange, ending]
 performance_order: [opening, refrain, exchange, refrain, ending]

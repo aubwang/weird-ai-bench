@@ -1,4 +1,4 @@
-# songbench: agent notes
+# weird ai bench: agent notes
 
 The README covers usage. This file covers how the repo is kept and why it's
 shaped the way it is. `CLAUDE.md` is a symlink to this file.
@@ -16,7 +16,7 @@ names them live only in gitignored folders:
   (`docs/local/handoff.md`). Read it if it exists.
 - `lyrics_*.txt` at the root: raw lyric files
 
-Don't put private files under `songbench/data/`, even gitignored ones: hiding
+Don't put private files under `weird_ai_bench/data/`, even gitignored ones: hiding
 them there means naming them in `.gitignore` or `pyproject.toml`, and those
 names are public. Public examples and tests use synthetic text only (the
 `two_voices` template). Before committing, check that nothing staged names a
@@ -25,7 +25,7 @@ the staged tree.
 
 ## The published results site
 
-The one exception is the results write-up, published as Weird AI Bench (the
+The one exception is the results write-up, published as weird ai bench (the
 benchmark's public name) with GitHub Pages from `docs/`: `docs/index.html` and
 `docs/img/`. It may name the real songs and quote lines the models wrote. It
 never shows the original lyrics: each parody line links to the moment in the

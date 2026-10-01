@@ -6,11 +6,11 @@ from dataclasses import asdict
 import pytest
 import yaml
 
-from songbench.cli import main
-from songbench.leaderboard import group_key
-from songbench.llm import ScriptedClient
-from songbench.orchestrate import Song, RunConfig, save
-from songbench.spec import load_spec
+from weird_ai_bench.cli import main
+from weird_ai_bench.leaderboard import group_key
+from weird_ai_bench.llm import ScriptedClient
+from weird_ai_bench.orchestrate import Song, RunConfig, save
+from weird_ai_bench.spec import load_spec
 
 REFERENCE = "Paper lanterns drift across the sleeping town"
 
@@ -64,7 +64,7 @@ def test_dry_run_shows_yaml_reference_without_client(tmp_path, monkeypatch, caps
     write_spec(path)
     def no_client(args):
         pytest.fail("Dry run must not construct an API client")
-    monkeypatch.setattr("songbench.cli._client", no_client)
+    monkeypatch.setattr("weird_ai_bench.cli._client", no_client)
     assert main(["run", "--model", "a/one", "--model", "b/two", "--spec", str(path), "--dry-run"]) == 0
     assert capsys.readouterr().out.count(REFERENCE) == 2
 
@@ -73,7 +73,7 @@ def test_dry_run_shows_yaml_reference_without_client(tmp_path, monkeypatch, caps
 def test_cli_uses_yaml_reference(command, tmp_path, monkeypatch):
     path = tmp_path / "song.yaml"
     write_spec(path)
-    monkeypatch.setattr("songbench.cli._client", lambda args: ScriptedClient())
+    monkeypatch.setattr("weird_ai_bench.cli._client", lambda args: ScriptedClient())
     out = tmp_path / "runs"
     args = [command, "--spec", str(path), "--out", str(out)]
     args += (["--model", "a/one", "--model", "b/two", "--track", "freeform"]

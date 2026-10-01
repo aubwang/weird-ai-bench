@@ -10,7 +10,7 @@ from .spec import InternalRhymeSpec, LineSpec, SectionSpec, describe_internal_rh
 
 GATES = ("structure", "syllables", "stress", "split", "rhyme", "internal_rhyme", "originality")
 
-# Bump when a rule change can move a saved run's scores; `songbench rescore`
+# Bump when a rule change can move a saved run's scores; `weird-ai-bench rescore`
 # brings old runs up to date. Runs saved without a version count as 1.
 SCORING_VERSION = 3
 

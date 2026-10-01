@@ -3,7 +3,7 @@ requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "songbench"
+name = "weird-ai-bench"
 version = "0.1.0"
 description = "Benchmark collaborative lyric writing by language models with meter checks and blind judging."
 readme = "README.md"
@@ -27,9 +27,9 @@ classifiers = [
 dependencies = ["pronouncing>=0.2", "pyyaml>=6", "httpx>=0.25"]
 
 [project.urls]
-Homepage = "https://github.com/aubwang/songbench"
-Repository = "https://github.com/aubwang/songbench"
-Issues = "https://github.com/aubwang/songbench/issues"
+Homepage = "https://github.com/aubwang/weird-ai-bench"
+Repository = "https://github.com/aubwang/weird-ai-bench"
+Issues = "https://github.com/aubwang/weird-ai-bench/issues"
 
 [project.optional-dependencies]
 test = ["pytest>=7"]
@@ -38,15 +38,15 @@ plot = [
 ]
 
 [project.scripts]
-songbench = "songbench.cli:main"
+weird-ai-bench = "weird_ai_bench.cli:main"
 
 [tool.setuptools.packages.find]
-include = ["songbench*"]
+include = ["weird_ai_bench*"]
 
 [tool.setuptools.package-data]
-"songbench.data.specs" = ["*.yaml"]
-"songbench.data.presets" = ["*.yaml"]
-"songbench.data.scenarios" = ["*.yaml"]
+"weird_ai_bench.data.specs" = ["*.yaml"]
+"weird_ai_bench.data.presets" = ["*.yaml"]
+"weird_ai_bench.data.scenarios" = ["*.yaml"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
