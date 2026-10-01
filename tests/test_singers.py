@@ -168,3 +168,13 @@ def test_cli_takes_one_model_per_singer(tmp_path, capsys):
     out = capsys.readouterr().out
     assert out.count("===== system prompt") == 3
     assert "You are Singer 2, Y" in out
+
+
+def test_writers_are_told_the_judging_criteria(tmp_path):
+    from songbench.prompts import judging_text
+    assert "respond to each other" in judging_text(spec_from_dict(trio_raw()))
+    solo = judging_text(spec_from_dict(solo_raw()))
+    assert "melody" in solo and "funny" in solo and "respond" not in solo
+    client = ScriptedClient()
+    Song(RunConfig(["a/one", "b/two"], spec="two_voices", track="freeform"), client).run()
+    assert "A judge will weigh" in client.calls[0]["messages"][0]["content"]

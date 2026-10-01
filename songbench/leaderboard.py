@@ -87,6 +87,19 @@ def singer_weights(run: dict) -> dict[str, float]:
     return {m: n / total for m, n in counts.items()}
 
 
+def expected_turns(run: dict) -> dict[str, int]:
+    """How many writing turns each singer gets in a finished song (a trade is one turn per line)."""
+    out: dict[str, int] = defaultdict(int)
+    for part in run["parts"].values():
+        author = part.get("author")
+        if isinstance(author, list):
+            for s in author:
+                out[str(s)] += 1
+        elif isinstance(author, int):
+            out[str(author)] += 1
+    return out
+
+
 def gate_stats(runs: list[dict]) -> list[dict]:
     """Per spec, model, track, and guidance: adherence, first-try pass, retries (no judge needed)."""
     acc: dict[tuple, dict] = defaultdict(lambda: {"adherence": [], "turns": 0, "first": 0,
@@ -99,6 +112,8 @@ def gate_stats(runs: list[dict]) -> list[dict]:
         for s, b in r["scores"]["by_singer"].items():
             slots[b["model"]].append(s)
         overall = (r.get("judge") or {}).get("scores", {}).get("overall")
+        # A failed song's unwritten turns count as turns that didn't pass.
+        expected = expected_turns(r) if "failed" in r else {}
         for model, singers in slots.items():
             a = acc[(spec, model, cfg["track"], cfg.get("guidance", "full"))]
             a["songs"] += 1
@@ -108,7 +123,7 @@ def gate_stats(runs: list[dict]) -> list[dict]:
                 if b["adherence"] is not None:
                     a["adherence"].append(b["adherence"])
                 turns = [t for t in r["turns"] if str(t["singer"]) == s]
-                a["turns"] += len(turns)
+                a["turns"] += max(len(turns), expected.get(s, 0))
                 a["first"] += sum(t["first_try_pass"] for t in turns)
                 a["final"] += sum(t["final_pass"] for t in turns)
                 a["retries"] += sum(t["retries"] for t in turns)
@@ -261,10 +276,43 @@ def _consistent(rec: dict) -> bool | None:
     return len(set(votes)) == 1 if votes else None
 
 
-def leaderboard(runs: list[dict], client, judge_model: str, cache_path: Path,
+def panel_for(judges: list[str], a: dict, b: dict) -> tuple[list[str], bool]:
+    """The judges allowed to compare two songs, and whether any had to be kept despite a conflict.
+
+    A judge sits out a pair when it shares a family with a singer in either song. When every
+    judge on the panel conflicts, all of them judge it, so the pair still counts.
+    """
+    if len(judges) == 1:
+        return judges, False
+    fams = {family(m) for r in (a, b) for m in r["config"]["models"]}
+    free = [j for j in judges if family(j) not in fams]
+    return (free, False) if free else (judges, True)
+
+
+def meter_by_model(runs: list[dict]) -> dict[str, float]:
+    """Each model's mean automated adherence over the runs it sang in; missing lines count as 0."""
+    acc: dict[str, list[float]] = defaultdict(list)
+    for r in runs:
+        for b in r["scores"]["by_singer"].values():
+            if b.get("adherence") is not None:
+                acc[b["model"]].append(b["adherence"])
+    return {m: _mean(v) for m, v in acc.items()}
+
+
+def leaderboard(runs: list[dict], client, judge_model: str | list[str], cache_path: Path,
                 max_pairs: int | None = 200, seed: int = 0, mix: bool = False,
-                log=None, bootstrap: int = 200, prior_sd: float = 1.0) -> dict:
+                log=None, bootstrap: int = 200, prior_sd: float = 1.0,
+                pairs: list[tuple[str, str]] | None = None, cached_only: bool = False) -> dict:
+    """Rank models from pairwise judgments within groups of identical settings.
+
+    `judge_model` is one judge, or a panel. With a panel, each pair is judged by the members that
+    share no family with its singers, and the pair's score is their average.
+    `pairs` fixes the schedule as run-id pairs (each within one group) instead of selecting one;
+    use it for a schedule planned in stages. With `cached_only`, nothing is judged: a judgment
+    missing from the cache drops that judge from the pair, and a pair left with no judge is skipped.
+    """
     log = log or (lambda m: None)
+    judges = [judge_model] if isinstance(judge_model, str) else list(dict.fromkeys(judge_model))
     cache: dict[str, dict] = {}
     if cache_path.exists():
         for line in cache_path.read_text().splitlines():
@@ -309,50 +357,70 @@ def leaderboard(runs: list[dict], client, judge_model: str, cache_path: Path,
                         "any advantage of a singer slot leaks into it. Add a third model, or use "
                         "--include-self.")
     all_models = sorted({m for r in runs for m in r["config"]["models"]})
-    try:
-        from .judge import family_overlap
-        overlap = family_overlap(all_models, judge_model)
-    except ImportError:
-        overlap = [m for m in all_models if family(m) == family(judge_model)]
-    if overlap:
-        warnings.append(f"Judge {judge_model} shares a family with {', '.join(overlap)}; "
-                        f"its rankings may favor those models.")
+    if len(judges) == 1:
+        overlap = [m for m in all_models if family(m) == family(judges[0])]
+        if overlap:
+            warnings.append(f"Judge {judges[0]} shares a family with {', '.join(overlap)}; "
+                            f"its rankings may favor those models.")
 
     rng = random.Random(seed)
     rng.shuffle(candidates)
-    free = [(i, j) for i, j in candidates
-            if failed[i] or failed[j]
-            or _ckey(judge_model, runs[i]["id"], runs[j]["id"]) in cache]
-    free_set = set(free)
-    paid = [p for p in candidates if p not in free_set]
     counts: dict[int, int] = defaultdict(int)
-    pairs = _balanced(free, max_pairs, counts)
-    if max_pairs is None or len(pairs) < max_pairs:
-        pairs += _balanced(paid, None if max_pairs is None else max_pairs - len(pairs), counts)
+    if pairs is not None:
+        index = {r["id"]: i for i, r in enumerate(runs)}
+        group_of = {i: g for g, idxs in groups.items() for i in idxs}
+        chosen = [(index[a], index[b]) for a, b in pairs]
+        if any(group_of[i] != group_of[j] for i, j in chosen):
+            raise ValueError("a scheduled pair crosses groups of different settings")
+        pairs = chosen
+    else:
+        # Select without observing outcomes or cache availability. Prioritizing free
+        # forfeits gives failed runs far more opponents than successful runs.
+        pairs = _balanced(candidates, max_pairs, counts)
 
     comparisons, records, pair_idx = [], [], []
+    conflicted, shared, agreed, skipped = 0, 0, 0, 0
     with cache_path.open("a") as fh:
         for n, (i, j) in enumerate(pairs, 1):
             a, b = runs[i], runs[j]
-            key = _ckey(judge_model, a["id"], b["id"])
             if failed[i] or failed[j]:
                 score = 0.5 if failed[i] and failed[j] else 0.0 if failed[i] else 1.0
-                rec = {"a": a["id"], "b": b["id"],
-                       "winner": "a" if score > 0.5 else "b" if score < 0.5 else "tie",
-                       "score_a": score, "votes": [], "judge": "forfeit",
-                       "judge_version": JUDGE_VERSION, "consistent": True}
-            elif key in cache:
-                rec = cache[key]
+                recs = [{"a": a["id"], "b": b["id"],
+                         "winner": "a" if score > 0.5 else "b" if score < 0.5 else "tie",
+                         "score_a": score, "votes": [], "judge": "forfeit",
+                         "judge_version": JUDGE_VERSION, "consistent": True}]
             else:
-                log(f"  judging pair {n}/{len(pairs)}")
-                rec = pairwise(a, b, client, judge_model)
-                rec.setdefault("judge_version", JUDGE_VERSION)
-                fh.write(json.dumps(rec) + "\n")
-                fh.flush()
-            y = rec["score_a"] if rec["a"] == a["id"] else 1 - rec["score_a"]
-            comparisons.append((weights[i], weights[j], y))
-            records.append(rec)
+                panel, forced = panel_for(judges, a, b)
+                conflicted += forced
+                recs = []
+                for judge in panel:
+                    key = _ckey(judge, a["id"], b["id"])
+                    if key in cache:
+                        rec = cache[key]
+                    elif cached_only:
+                        continue
+                    else:
+                        log(f"  judging pair {n}/{len(pairs)} with {judge}")
+                        rec = pairwise(a, b, client, judge)
+                        rec.setdefault("judge_version", JUDGE_VERSION)
+                        fh.write(json.dumps(rec) + "\n")
+                        fh.flush()
+                    recs.append(rec)
+            if not recs:
+                skipped += 1
+                continue
+            ys = [r["score_a"] if r["a"] == a["id"] else 1 - r["score_a"] for r in recs]
+            if len(ys) > 1:
+                shared += 1
+                agreed += len(set(ys)) == 1
+            comparisons.append((weights[i], weights[j], sum(ys) / len(ys)))
+            records.extend(recs)
             pair_idx.append((i, j))
+    if skipped:
+        warnings.append(f"{skipped} scheduled pairs had no cached judgment and were left out.")
+    if conflicted:
+        warnings.append(f"{conflicted} pairs had no judge outside their singers' families, so the "
+                        f"whole panel judged them.")
 
     strengths = fit_additive_bt(comparisons, prior_sd=prior_sd) if comparisons else {}
     bands = _bootstrap(runs, groups, comparisons, pair_idx, strengths, bootstrap, seed, prior_sd)
@@ -363,16 +431,20 @@ def leaderboard(runs: list[dict], client, judge_model: str, cache_path: Path,
             da, db = round(wa.get(m, 0.0), 6), round(wb.get(m, 0.0), 6)
             if da != db:  # a model on both sides equally is no evidence for or against itself
                 credit[m].append(y if da > db else 1 - y)
+    meter = meter_by_model(runs)
     table = sorted(
         ({"model": m, "elo": round(to_elo(v)),
           "elo_lo": round(to_elo(bands[m][0])) if m in bands else None,
           "elo_hi": round(to_elo(bands[m][1])) if m in bands else None,
-          "games": len(credit[m]), "win_rate": _mean(credit[m]), "strength": v}
+          "games": len(credit[m]), "win_rate": _mean(credit[m]), "meter": meter.get(m),
+          "strength": v}
          for m, v in strengths.items()),
         key=lambda r: -r["elo"])
     judged = [c for r in records if r.get("judge") != "forfeit" and (c := _consistent(r)) is not None]
-    return {"judge": judge_model, "pairs": len(comparisons), "table": table, "records": records,
+    return {"judge": judges[0] if len(judges) == 1 else "panel: " + ", ".join(judges),
+            "judges": judges, "pairs": len(comparisons), "table": table, "records": records,
             "flip_rate": (sum(not c for c in judged) / len(judged)) if judged else None,
+            "judge_agreement": agreed / shared if shared else None,
             "warnings": warnings,
             "forfeits": sum(r.get("judge") == "forfeit" for r in records)}
 

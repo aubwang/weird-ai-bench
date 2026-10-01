@@ -47,9 +47,23 @@ def cast_text(spec: SongSpec, cfg, singer: int) -> str:
     return f"{who} {others} own parts separately. Write only the part you're asked for."
 
 
+def judging_text(spec: SongSpec) -> str:
+    """What the judge weighs, so writers aren't scored on goals they were never told.
+
+    It names the criteria only. It suggests no topics or jokes.
+    """
+    crit = ["how well the lines fit the original melody when sung", "how funny it is",
+            "how cleverly it echoes the original song", "how well it holds together"]
+    if spec.singers > 1:
+        crit.append("how the singers' parts respond to each other")
+    return ("The finished song will be compared with other parodies of the same song. A judge "
+            "will weigh " + ", ".join(crit[:-1]) + ", and " + crit[-1] + ".")
+
+
 def system_prompt(spec: SongSpec, cfg, scenario: Scenario, singer: int,
                   reference_lyrics: str | None = None) -> str:
-    parts = [p for p in (scenario.render(spec, singer), cast_text(spec, cfg, singer)) if p]
+    parts = [p for p in (scenario.render(spec, singer), cast_text(spec, cfg, singer),
+                         judging_text(spec)) if p]
     fmt = ("Put the lyrics between <lyrics> and </lyrics>, one sung line per line, with exactly "
            "the number of lines asked for. Inside the tags, write only the lyrics: no numbering"
            + (", labels, syllable counts, or stress marks." if guided(cfg) else " or labels.")

@@ -4,10 +4,10 @@ import json
 
 import pytest
 
-from songbench.judge import (JUDGE_VERSION, _context, _extract_json, _score, family_overlap, pairwise,
-                             redact_names, rubric, same_family_warning)
+from songbench.judge import (JUDGE_VERSION, _context, _extract_json, _score, _sheet, check_notes, family_overlap,
+                             pairwise, redact_names, rubric, same_family_warning)
 from songbench.llm import ScriptedClient
-from songbench.orchestrate import RunConfig, Song
+from songbench.orchestrate import RunConfig, Song, rescore
 
 CHORUS = "<lyrics>We watch the light\nWe walk back home</lyrics>"
 OPENING = "<lyrics>The sky is bright</lyrics>"
@@ -27,7 +27,7 @@ def prompts(client: ScriptedClient) -> list[str]:
 
 
 def test_version_bumped():
-    assert JUDGE_VERSION == 2
+    assert JUDGE_VERSION == 4
 
 
 def test_redacts_persona_model_and_family_names():
@@ -140,6 +140,8 @@ def test_pairwise_record():
     assert out["score_a"] == 0.5 and out["a"] == a["id"] and out["b"] == b["id"]
     out = pairwise(a, b, ScriptedClient(['{"winner": 2}', '{"winner": 1}']), "mistralai/mistral-large")
     assert out["votes"] == ["b", "b"] and out["consistent"] is True and out["winner"] == "b"
+    out = pairwise(a, b, ScriptedClient(['{"winner": 1}', '{"winner": "tie"}']), "mistralai/mistral-large")
+    assert out["winner"] == "tie" and out["score_a"] == 0.5
 
 
 def test_extract_json_ignores_braces_in_prose():
@@ -171,3 +173,47 @@ def test_family_overlap_and_warning():
     r = make(["openai/gpt-5", "x-ai/grok-4"])
     assert "gpt-5" in same_family_warning(r, "gpt-4o")
     assert same_family_warning(r, "google/gemini-3") is None
+
+
+def test_sheet_lists_automated_check_misses():
+    r = make()
+    line = r["verification"]["opening"]["lines"][0]
+    line.update(syllables_ok=False, count=9, copied=False)
+    notes = check_notes(r)
+    assert notes.startswith("Automated checks: 5 of 6 generated lines")
+    assert f"Opening: line 1 has 9 syllables (target {line['target']})" in notes
+    c = ScriptedClient(['{"winner": 1}', '{"winner": 2}'])
+    pairwise(r, make(), c, "mistralai/mistral-large")
+    assert all(p.count("Automated checks:") == 2 for p in prompts(c))
+
+
+def test_check_notes_count_unwritten_lines():
+    r = make()
+    r["verification"]["ending"]["lines"] = []
+    r["verification"]["ending"]["structure_errors"] = ["Ending needs exactly 1 lines; got 0."]
+    notes = check_notes(r)
+    assert "Ending: 1 line never written." in notes and "needs exactly" not in notes
+    assert "5 of 6 generated lines" in notes
+
+
+def test_setup_keeps_assigned_character_names():
+    r = make(names="assigned", personas=["Harbor", "Lantern"])
+    r["scenario_snapshot"]["text"] = "Singer 1 plays Harbor. Singer 2 plays Lantern."
+    assert "Singer 1 plays Harbor. Singer 2 plays Lantern." in _context(r)
+    # A persona that is also a singer's model name is still hidden.
+    r = make(names="assigned", personas=["GPT", "Lantern"])
+    r["scenario_snapshot"]["text"] = "Singer 1 plays GPT."
+    assert "plays GPT" not in _context(r)
+
+
+def test_names_the_setup_gives_everyone_stay_visible():
+    r = make(["openai/gpt-5", "openai/gpt-5"])
+    r["scenario_snapshot"]["text"] = "Put GPT in the hook."
+    r["parts"]["opening"]["lines"] = ["That's GPT, and gpt-5 wrote it"]
+    sheet = _sheet(r)
+    assert "That's GPT, and a singer wrote it" in sheet
+
+
+def test_newer_families_are_redacted():
+    r = make(["moonshotai/kimi-k3", "z-ai/glm-5"])
+    assert redact_names("Kimi and GLM-5 sang", r) == "Singer 1 and Singer 2 sang"

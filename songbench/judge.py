@@ -12,7 +12,7 @@ from .orchestrate import render_sheet, result_scenario
 from .spec import describe_internal_rhyme, result_spec, syllable_map
 
 # Bump when a judge prompt changes; cached judgments from other versions are ignored.
-JUDGE_VERSION = 2
+JUDGE_VERSION = 4
 
 CRITERIA = {
     "singability": "Would the lines fit the original melody when sung? Natural word stress, "
@@ -54,10 +54,14 @@ FAMILY_ALIASES = {
     "openai": ["ChatGPT", "GPT", "OpenAI"],
     "google": ["Gemini", "Gemma", "Google", "Bard"],
     "x-ai": ["Grok", "xAI"],
-    "meta-llama": ["Llama", "Meta"],
+    "meta-llama": ["Llama", "Meta", "Muse"],
     "deepseek": ["DeepSeek"],
     "mistralai": ["Mistral", "Mixtral"],
     "qwen": ["Qwen"],
+    "moonshotai": ["Kimi", "Moonshot"],
+    "z-ai": ["GLM", "Zhipu"],
+    "xiaomi": ["MiMo", "Xiaomi"],
+    "minimax": ["MiniMax"],
 }
 # Version tails such as "-5", " 4o", "-3.5-turbo", so "GPT-5-mini" goes as one name.
 _TAIL = r"(?:[ -]?\d(?:\w|\.(?=\d))*)?(?:-[A-Za-z0-9](?:\w|\.(?=\d))*)*"
@@ -89,7 +93,9 @@ def redact_names(text: str, result: dict, keep: tuple[str, ...] = ()) -> str:
         return text
     names = sorted(owners, key=len, reverse=True)
     alts = "|".join(f"({re.escape(n)}{_TAIL if owners[n][1] else ''})" for n in names)
-    kept = "|".join([r"Singer\s+\d+", *(re.escape(k) for k in sorted(keep, key=len, reverse=True) if k)])
+    # A kept word followed by a version ("GPT" in "GPT-5") is a model name, and still goes.
+    kept = "|".join([r"Singer\s+\d+", *(re.escape(k) + r"(?![ -]?\d)"
+                                          for k in sorted(keep, key=len, reverse=True) if k)])
     pattern = re.compile(rf"(?<!\w)(?:({kept})|{alts})(['\u2019]s)?(?!\w)", re.I)
 
     def sub(m: re.Match) -> str:
@@ -123,7 +129,12 @@ def _context(result: dict) -> str:
     setup = [scenario.render(spec)]
     setup += [f"Singer {k} was also told: {scenario.singer_text(spec, k)}"
               for k in sorted(scenario.per_singer) if scenario.singer_text(spec, k)]
-    setup = redact_names("\n".join(x for x in setup if x.strip()), result, (spec.title, spec.artist))
+    # Assigned personas are characters every song in the group shares, so naming them in the setup
+    # reveals no model; replacing them would leave "Singer 1 plays Singer 1".
+    characters = tuple(p for p in (cfg.get("personas") or [])
+                       if p and cfg.get("names") == "assigned" and not _names_a_model(p, result))
+    setup = redact_names("\n".join(x for x in setup if x.strip()), result,
+                         (spec.title, spec.artist, *characters))
     setup_note = (f"The singers were given this setup:\n<setup>\n{setup}\n</setup>" if setup
                   else "The singers were given no setup beyond the song itself.")
     refrains = []
@@ -158,9 +169,53 @@ def _context(result: dict) -> str:
         f'This is a parody written by {by} to the tune of "{spec.title}" '
         f"({spec.artist}). {chorus_note}\n\n{setup_note}\n\n{ref_note}{refrain_note}"
         f"Target syllables per line:\n{syllable_map(spec)}\n\n{internal_note}"
-        f"You can't hear it, so judge singability from the text and the target counts. "
+        f"You can't hear it, so judge singability from the text, the target counts, and the "
+        f"automated check results listed after each song. The checker counts syllables and rhymes "
+        f"from a pronouncing dictionary and can be wrong about how a word is sung, so weigh each "
+        f"miss by how much it would hurt a real performance. "
         f"Text inside <adlib> tags is an uncounted ad-lib, not part of the main line's meter or rhyme."
     )
+
+
+def _names_a_model(name: str, result: dict) -> bool:
+    """Whether a persona would be redacted as some singer's model or family name anyway."""
+    probe = redact_names(name, {**result, "config": {**result["config"], "personas": []}})
+    return probe != name
+
+
+def check_notes(result: dict) -> str:
+    """The automated meter, rhyme, and copying misses in the generated sections, as plain text."""
+    spec = result_spec(result)
+    verification = result.get("verification") or {}
+    notes, total, ok = [], 0, 0
+    for key in dict.fromkeys(spec.performance_order):
+        part = result["parts"].get(key) or {}
+        if key not in verification or part.get("author") in ("fixed", "original"):
+            continue
+        rep, sec = verification[key], spec.sections[key]
+        found = []
+        for line in rep.get("lines", []):
+            total += 1
+            ok += bool(line.get("syllables_ok"))
+            if not line.get("syllables_ok"):
+                lo = max(line["target"] - line.get("under", 0), 1)
+                hi = line["target"] + line.get("over", 0)
+                need = f"{lo} to {hi}" if lo != hi else str(lo)
+                found.append(f"line {line['index']} has {line.get('count')} syllables (target {need})")
+            if line.get("copied"):
+                found.append(f"line {line['index']} copies the original")
+        missing = len(sec.lines) - len(rep.get("lines", []))
+        if missing > 0:
+            total += missing
+            found.append(f"{missing} line{'s' if missing > 1 else ''} never written")
+        found += [e.rstrip(".") for e in rep.get("structure_errors", [])
+                  if not (missing > 0 and "needs exactly" in e)]
+        found += [e.rstrip(".") for e in rep.get("rhyme_errors", [])]
+        if found:
+            notes.append(f"- {sec.label}: " + "; ".join(found) + ".")
+    head = f"Automated checks: {ok} of {total} generated lines are within their syllable targets."
+    text = head + ("\n" + "\n".join(notes) if notes else " No other misses.")
+    return redact_names(text, result, (spec.title, spec.artist, *scenario_terms(result)))
 
 
 def _extract_json(text: str) -> dict:
@@ -197,8 +252,23 @@ def _score(value) -> float | None:
     return out if math.isfinite(out) else None
 
 
+def scenario_terms(result: dict) -> tuple[str, ...]:
+    """Model and family names the setup itself gives every singer, such as a hook built on "GPT".
+
+    Every song in the group was told to use them, so they reveal no author, and replacing them
+    in one family's songs only would garble those songs alone.
+    """
+    sc = result.get("scenario_snapshot") or {}
+    setup = " ".join([sc.get("text") or "", *(sc.get("per_singer") or {}).values()])
+    names = {n for m in result["config"]["models"]
+             for n in (m, display_name(m), *FAMILY_ALIASES.get(family(m), []))}
+    return tuple(n for n in names if re.search(rf"(?<!\w){re.escape(n)}(?!\w)", setup, re.I))
+
+
 def _sheet(result: dict) -> str:
-    return redact_names(render_sheet(result, blind=True, show_scores=False), result)
+    sheet = redact_names(render_sheet(result, blind=True, show_scores=False), result,
+                         scenario_terms(result))
+    return f"{sheet}\n\n{check_notes(result)}" if result.get("verification") else sheet
 
 
 def blend_singability(scores: dict, adherence: dict[str, float]) -> None:
@@ -260,8 +330,8 @@ def pairwise(a: dict, b: dict, client, judge_model: str) -> dict:
             votes.append("a" if flip else "b")
         else:
             votes.append("tie")
-    # Disagreement between the two orderings is position bias, so it averages toward a tie.
-    score_a = sum({"a": 1.0, "tie": 0.5, "b": 0.0}[v] for v in votes) / len(votes)
+    # Every disagreement, including a win paired with a tie, is a tie.
+    score_a = {"a": 1.0, "tie": 0.5, "b": 0.0}[votes[0]] if votes[0] == votes[1] else 0.5
     winner = "a" if score_a > 0.5 else "b" if score_a < 0.5 else "tie"
     return {"a": a["id"], "b": b["id"], "winner": winner, "score_a": score_a,
             "votes": votes, "consistent": votes[0] == votes[1], "judge": judge_model,

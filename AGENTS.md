@@ -35,8 +35,10 @@ Tests use `ScriptedClient`, so they don't need the network.
 
 - **Content comes from the models.** Prompts give structure only: no roast
   guidance and no topic hints. The only framing is the scenario file the run
-  selects. The runner adds the singer list, the output-format rules, and the
-  song's reference lyrics.
+  selects. The runner adds the singer list, the output-format rules, the
+  song's reference lyrics, and the judge's criteria (melody fit, humor, parody
+  craft, coherence, interplay), so writers aren't scored on goals they were
+  never told.
 - **Songs set their own singer count.** A template has `singers: N`, a run
   gives one model per singer, and one template covers one singer count.
 - **Tracks share prompts.** `strict` retries failed checks and `freeform` is
@@ -55,9 +57,12 @@ Tests use `ScriptedClient`, so they don't need the network.
 - **Judging is blind.** The judge sees "Singer 1", "Singer 2", and so on, and
   model, persona, and family names inside the lyrics are redacted to match. It
   should come from a different model family than the singers. The judge also
-  sees the reference lyrics, since it rates parody craft. The leaderboard
+  sees the reference lyrics, since it rates parody craft, and the automated
+  check results, since a model can't count syllables reliably. The leaderboard
   judges each pair twice with the order swapped, and a disagreement counts as a
-  tie.
+  tie. When every family is also a contestant, use a panel of judges from
+  several families: each pair skips the judges from its singers' families.
+  Meter is reported beside the judged rating, not blended into it.
 - **The fit is weighted additive Bradley-Terry.** A song's strength is its
   singers' model strengths weighted by each singer's share of the generated
   lines as performed, so a repeated chorus counts for its writer and a

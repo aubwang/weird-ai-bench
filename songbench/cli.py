@@ -380,25 +380,34 @@ def cmd_leaderboard(args) -> int:
     client = OpenRouterClient(max_tokens=args.max_tokens)
     first = Path(args.paths[0])
     cache = (first if first.is_dir() else first.parent) / "judgments.jsonl"
-    lb = leaderboard(runs, client, args.judge, cache, max_pairs=args.max_pairs,
+    judges = args.judge[0] if len(args.judge) == 1 else args.judge
+    lb = leaderboard(runs, client, judges, cache, max_pairs=args.max_pairs,
                      seed=args.seed or 0, mix=args.mix, log=_log, bootstrap=args.bootstrap,
                      prior_sd=args.prior_sd)
+    if args.json_out:
+        destination = Path(args.json_out)
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_text(json.dumps(lb, indent=2) + "\n", encoding="utf-8")
     for w in lb["warnings"]:
         _log(f"warning: {w}")
     flips = "" if lb["flip_rate"] is None else f" · judge flipped with order on {lb['flip_rate']:.0%}"
     forfeits = f" ({lb['forfeits']} forfeits by failed songs)" if lb["forfeits"] else ""
-    print(f"Judge: {lb['judge']} · {lb['pairs']} pairwise comparisons{forfeits}{flips}\n")
+    agree = ("" if lb.get("judge_agreement") is None
+             else f" · judges agreed on {lb['judge_agreement']:.0%} of shared pairs")
+    print(f"Judge: {lb['judge']} · {lb['pairs']} pairwise comparisons{forfeits}{flips}{agree}\n")
     if not lb["table"]:
         return 1
     ci = lb["table"][0]["elo_lo"] is not None
     print(f"{'#':>2}  {'model':<44} {'elo':>5} " + (f"{'95% interval':>13} " if ci else "")
-          + f"{'games':>6} {'win%':>6}")
+          + f"{'games':>6} {'win%':>6} {'meter':>6}")
     for i, r in enumerate(lb["table"], 1):
         band = f"{r['elo_lo']:>6}-{r['elo_hi']:<6} " if ci else ""
         win = "–" if r["win_rate"] is None else f"{r['win_rate']:.0%}"
-        print(f"{i:>2}  {r['model']:<44} {r['elo']:>5} {band}{r['games']:>6} {win:>6}")
+        meter = "–" if r.get("meter") is None else f"{r['meter']:.0%}"
+        print(f"{i:>2}  {r['model']:<44} {r['elo']:>5} {band}{r['games']:>6} {win:>6} {meter:>6}")
     if ci:
         print("\nIntervals resample songs within each group; overlapping intervals are not a ranking.")
+    print("Meter is the automated line adherence, reported beside the judged ranking, not part of it.")
     return 0
 
 
@@ -481,8 +490,11 @@ def main(argv=None) -> int:
 
     p = sub.add_parser("leaderboard", help="pairwise-judge runs and rank models")
     p.add_argument("paths", nargs="+", help="run files or directories")
-    p.add_argument("--judge", required=True)
+    p.add_argument("--judge", required=True, action="append",
+                   help="judge model id; repeat for a panel, where each pair skips judges "
+                        "from its singers' families")
     p.add_argument("--max-pairs", type=int, default=200)
+    p.add_argument("--json-out", help="save leaderboard data for plotting")
     p.add_argument("--mix", action="store_true", help="compare across settings, not just within")
     p.add_argument("--bootstrap", type=int, default=200,
                    help="bootstrap resamples for the 95%% intervals (0 turns them off)")
