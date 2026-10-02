@@ -33,10 +33,10 @@ original lyrics: each parody line links to the moment in the official recording
 instead, and lines the originality check flags as close to the original are left
 out. Profanity and slurs are starred out.
 
-That section is generated, not hand-edited: `docs/local/build_blog.py README.md
---readme` (the picks and `readme_results.md` template live in `docs/local/`).
-Rebuild it rather than editing it, and keep the original-lyrics rule when
-changing the generator. The rest of the README is written by hand.
+That section is generated, not hand-edited: `docs/local/build_readme.py
+README.md` (the picks and the `readme_results.md` template live in
+`docs/local/`). Rebuild it rather than editing it, keep it plain Markdown with
+no raw HTML, and keep the original-lyrics rule when changing the generator. The rest of the README is written by hand.
 
 ## Tests
 
