@@ -20,22 +20,23 @@ Don't put private files under `weird_ai_bench/data/`, even gitignored ones: hidi
 them there means naming them in `.gitignore` or `pyproject.toml`, and those
 names are public. Public examples and tests use synthetic text only (the
 `two_voices` template). Before committing, check that nothing staged names a
-private song outside the results site: `git diff --cached` and `git grep` over
+private song outside the results write-up: `git diff --cached` and `git grep` over
 the staged tree.
 
-## The published results site
+## The published results
 
-The one exception is the results write-up, published as weird ai bench (the
-benchmark's public name) with GitHub Pages from `docs/`: `docs/index.html` and
-`docs/img/`. It may name the real songs and quote lines the models wrote. It
-never shows the original lyrics: each parody line links to the moment in the
-official recording instead, and lines the originality check flags as close to
-the original are left out. Profanity and slurs are starred out.
+The one exception is the results write-up in `README.md`, between the
+`<!-- results:start -->` and `<!-- results:end -->` markers, with its charts in
+`docs/img/`. weird ai bench is the benchmark's public name. The write-up may
+name the real songs and quote lines the models wrote. It never shows the
+original lyrics: each parody line links to the moment in the official recording
+instead, and lines the originality check flags as close to the original are left
+out. Profanity and slurs are starred out.
 
-It's generated, not hand-edited: `docs/local/build_blog.py docs/index.html
---site --public` (the page template and picks live in `docs/local/`). Rebuild it
-rather than editing the HTML, and keep the original-lyrics rule when changing
-the generator.
+That section is generated, not hand-edited: `docs/local/build_blog.py README.md
+--readme` (the picks and `readme_results.md` template live in `docs/local/`).
+Rebuild it rather than editing it, and keep the original-lyrics rule when
+changing the generator. The rest of the README is written by hand.
 
 ## Tests
 
