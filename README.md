@@ -32,7 +32,16 @@ Parody puts several writing skills under pressure at once. A joke has to fit a l
 
 Twelve models, six songs, two scenarios per song, two samples per scenario: **288 attempted songs, 281 completed, 650 pairs compared, $67.44 in API costs.**
 
-The songs were I Had Some Help, Down, STAY, Good Time, GBP and Rich Flex. Each received scenarios suited to its mood: two agents blaming each other for a mess, for example, or a chatbot enjoying a day without requests. Each model attempted 24 songs on the freeform track, with no revisions based on checker feedback. It wrote both sides of each duet in separate conversations; the second singer could read the first singer's lyrics.
+The six songs and their credited artists:
+
+- [I Had Some Help](https://www.youtube.com/watch?v=PCBZOSM8h5U) — Post Malone featuring Morgan Wallen
+- [Down](https://www.youtube.com/watch?v=oUbpGmR1-QM) — Jay Sean featuring Lil Wayne
+- [STAY](https://www.youtube.com/watch?v=rkYlZnIbe2E) — The Kid LAROI and Justin Bieber
+- [Good Time](https://www.youtube.com/watch?v=MpfSEZLuWxY) — Owl City and Carly Rae Jepsen
+- [GBP](https://www.youtube.com/watch?v=MdWeyGSqw1Q) — Central Cee featuring 21 Savage
+- [Rich Flex](https://www.youtube.com/watch?v=I4DjHHVHWAE) — Drake and 21 Savage
+
+Each song received two scenarios suited to its mood: two agents blaming each other for a mess, for example, or a chatbot enjoying a day without requests. Each model attempted 24 songs on the freeform track, with no revisions based on checker feedback. It wrote both sides of each duet in separate conversations; the second singer could read the first singer's lyrics.
 
 | # | Model | Index | Meter | Cost per song |
 |--:|---|--:|--:|--:|
