@@ -1,33 +1,38 @@
 # weird ai bench
 
-![Bar chart of the weird ai bench parody index. GPT-6 Astra 94, GPT-6.1 Sol 89, Claude Opus 5.5 81, Gemini 3.8 Flash 73, Grok 4.7 59, Muse Spark 1.3 46, GLM-5.3 46, Kimi K3 40, GPT-6 Luna 40, Qwen3.8 Max 40, Claude Sonnet 5.5 31, DeepSeek V4.1 Flash 21.](docs/img/parody-index.png)
+**A benchmark for creative writing under constraints: can a language model write a parody that works as a song?**
 
-weird ai bench has language models rewrite real songs as parodies that fit the original melody. Each model gets a song's structure, meaning the number of lines in each section and the syllables in each line, along with a scenario to write about. A checker scores every line's meter and rhyme against that structure, and a panel of AI judges compares finished songs in pairs without knowing who wrote them.
+weird ai bench asks models to rewrite songs while keeping their rhythm, rhyme and structure. The challenge is to make the new lyrics funny, give them a point of view, and leave room for another singer to answer. Automated checks measure the verse mechanics; blind AI judges compare the finished songs.
+
+The project brings the experiment into a reusable Python CLI: define a song and scenario, assign models to singer roles, run the checks, and compare results. Every run saves its prompts, responses, checks and retries for inspection.
+
+![Parody index for the twelve models in this benchmark, with uncertainty intervals.](docs/img/parody-index.png)
 
 - [What parody writing tests](#what-parody-writing-tests)
 - [Results](#results)
 - [Best lines](#best-lines)
+- [Judging](#judging) and [limitations](#limitations)
 - [How it works](#how-it-works)
 - [Run it yourself](#run-it-yourself)
 
 ## What parody writing tests
 
-A parody tests skills that a short story or an essay can hide.
+Parody puts several writing skills under pressure at once. A joke has to fit a line, the line has to fit a melody, and the song has to make sense from beginning to end.
 
-The models never hear the song. They get syllable counts and stress patterns and have to write lines a singer could fit to the tune, so the benchmark tests prosody worked out on paper. The checker scores this directly, and the meter column in the results shows how far apart models are: GPT-6 Astra hit 95% of its syllable targets and Claude Sonnet 5.5 hit 66%.
+**Precision.** Models work from reference lyrics and a written song map, without hearing the recording. They have to place syllables, stresses and rhymes where a singer can use them. The checker makes those constraints measurable, though a passing score cannot guarantee a good performance.
 
-The new song also has to stay recognizable as the old one. The best lines keep a move from the original and point it somewhere new. Opus traded references in its Rich Flex song for AI ones, one for one, and Astra turned STAY's "No, don't go" pre-chorus into "I don't know," the sentence chatbots are known for avoiding. A model that copies too much fails the originality check, and one that keeps the original's details without adapting them writes nonsense; Astra noticed many Rich Flex parodies kept references to Kobe and B&E that meant nothing in the new setting.
+**Transformation.** A good parody gives familiar phrasing a new purpose. It keeps enough of the original's shape to be recognizable while changing what the song means. Copying fails the originality check; replacing a few nouns can pass that check and still make a weak parody.
 
-Jokes have to fit a fixed number of syllables and usually land on the last word of a line, where the rhyme falls. That leaves little room for setup, so the strongest lines fit a whole joke into one line, like Sol's "My fact-check bot is me in a fake beard." Rich Flex and GBP are rap songs built on boasts and internal rhyme while STAY is a pleading pop song, and each parody has to keep its original's voice.
+**Comic timing and voice.** A punchline often has to land on the rhyme, with only a few syllables of setup. The strongest writing makes that restriction part of the joke. It also preserves the song's character: a boastful rap and a pleading pop duet call for different voices.
 
-A song also has to hold together. Astra's Down parody carries one story about a user's cat through three sections and pays it off in the last line. The duets add a listening test on top: the second singer reads the first singer's part and has to answer it rather than fill its own slots. In these results one model wrote both parts of each song, so the duets mostly show a model answering itself. The tool can put a different model on each part to test this properly.
-
-Some failures come down to knowing what belongs in a lyric at all. Sonnet pasted its own syllable notes into a bridge, and Qwen wrote stress marks in capital letters, as if singing to the checker.
+**Coherence and response.** A premise needs to survive across verses, and a second singer needs to do something with the first singer's part. The runner gives each singer a separate conversation and passes earlier lyrics forward. The published experiment uses one model for both roles; mixed-model lineups are supported by the CLI.
 
 <!-- results:start -->
 ## Results
 
-Twelve models wrote parodies of six songs: I Had Some Help, Down, STAY, Good Time, GBP and Rich Flex. Each song came with two scenarios picked to fit its mood, such as two agents blaming each other for a mess (I Had Some Help) or a model with a day off and no requests (Good Time). One model wrote both parts of each duet in separate conversations, and the second singer could read what the first had written. Each model wrote 24 songs on the freeform track, 288 in all; 281 finished, the judges compared 650 pairs, and the API bill came to $67.44.
+Twelve models, six songs, two scenarios per song, two samples per scenario: **288 attempted songs, 281 completed, 650 pairs compared, $67.44 in API costs.**
+
+The songs were I Had Some Help, Down, STAY, Good Time, GBP and Rich Flex. Each received scenarios suited to its mood: two agents blaming each other for a mess, for example, or a chatbot enjoying a day without requests. Each model attempted 24 songs on the freeform track, with no revisions based on checker feedback. It wrote both sides of each duet in separate conversations; the second singer could read the first singer's lyrics.
 
 | # | Model | Index | Meter | Cost per song |
 |--:|---|--:|--:|--:|
@@ -44,17 +49,21 @@ Twelve models wrote parodies of six songs: I Had Some Help, Down, STAY, Good Tim
 | 11 | Claude Sonnet 5.5 | 31 | 66% | $0.101 |
 | 12 | DeepSeek V4.1 Flash | 21 | 70% | $0.022 |
 
-The index is a model's estimated chance of beating an average-rated song when a judge compares the two, and the whiskers on the chart above are 95% intervals from resampling songs. Meter is the share of a model's lines that hit their syllable targets.
+The **index** estimates the chance, expressed as a percentage, that a model's song beats an average-rated song under the fitted model. It is a relative rating within this experiment. The chart's whiskers show 95% intervals from resampling songs. **Meter** is the share of lines that meet their syllable targets; **cost per song** is the writing cost.
 
-GPT-6 Astra came first. GPT-6.1 Sol came second at about 3 cents a song, a fifth of what Astra cost. Dropping any one of the six songs leaves places 1 to 5 in the same order, while places 6 to 10 are too close to separate. The judges saw the checker's results for each song, and their ranking tracks the meter column fairly well (Spearman correlation 0.70).
+GPT-6 Astra led the ranking. GPT-6.1 Sol followed at roughly three cents per song, about one-fifth of Astra's cost. Removing any one song from the analysis leaves the top five in the same order. Places six through ten are too close to distinguish confidently.
+
+Higher ratings tended to accompany better meter (Spearman correlation 0.70). Judges saw the automated check results, so that association should be read in light of the evaluation design: the two measurements were not independent.
 
 ## Best lines
 
-Two of the contestants, Claude Opus 5.5 and GPT-6 Astra, also read all 281 finished songs and picked the lines they thought were best. Both saw the model names and the judges' results, and neither saw the other's list.
+The scores describe whole songs. These excerpts show what the models could do in a few lines.
 
-A great line from a weak song could make either list, so each pick shows how its whole song did with the judges. Seven of Claude's ten came from songs ranked in their group's top four, while Astra took two from songs ranked 15th and 16th. Both readers leaned toward OpenAI writers, as the judges did. Astra picked its own songs four times in its ten, and Claude picked Claude songs twice.
+Claude Opus 5.5 and GPT-6 Astra each read all 281 completed songs and independently chose their favorites. This was a separate editorial exercise: both readers saw author names and judging results, and both were contestants. Their picks are useful illustrations, with room for self-preference, rather than additional blind evidence for the ranking.
 
-Each timestamp opens the original song on YouTube about a second before the line being parodied, so you can hear the tune the new line was written for. The original lyrics aren't reproduced here.
+Each excerpt includes its whole song's result within its comparison group. Seven of Claude's ten picks came from songs in their group's top four; Astra also chose lines from songs ranked 15th and 16th. Astra selected its own work four times, while Claude selected Claude-family songs twice.
+
+Timestamp links open the official recording about a second before the corresponding line, so you can hear where the parody fits. Original lyrics and excerpts flagged as too close to them are omitted; profanity and slurs are masked.
 
 ### Claude Opus 5.5's picks
 
@@ -78,7 +87,7 @@ Each timestamp opens the original song on YouTube about a second before the line
 >
 > There, I said it; tell me that you're still here [1:38](https://www.youtube.com/watch?v=rkYlZnIbe2E&t=97s)
 
-The original's pre-chorus repeats one plea. Astra's first pre-chorus does the same with "No, don't go," and the second swaps in "I don't know," the sentence chatbots are known for never saying.
+Astra turns a repeated plea into a small act of honesty. The shift to "I don't know" gives the second pre-chorus a payoff: the chatbot finally admits uncertainty to keep the user listening.
 
 *Whole song: won 95% of its judge verdicts, 1st of 24 in its group.*
 
@@ -98,7 +107,7 @@ The original's pre-chorus repeats one plea. Astra's first pre-chorus does the sa
 
 > Wake me with a prompt, paste your whole codebase in, and I'll say you're absolutely right [1:56](https://www.youtube.com/watch?v=MdWeyGSqw1Q&t=115s)
 
-The token-limit line stops mid-sentence, and the rest of the song goes through chatbot habits one by one. The judges ranked Sonnet 11th, mostly for missing the meter, but this song deserved better.
+The token-limit joke ends exactly where it should: before the sentence does. Sonnet ranked 11th overall and struggled with meter, but this song shows how much a model-level rating can hide.
 
 *Whole song: won 77% of its judge verdicts, 5th of 24 in its group.*
 
@@ -120,7 +129,7 @@ The token-limit line stops mid-sentence, and the rest of the song goes through c
 >
 > That wasn't blackmail; that's my cry for help [1:38](https://www.youtube.com/watch?v=rkYlZnIbe2E&t=97s)
 
-Sol bends the original's "you know that I know" line into a threat, then has the model take it back as a cry for help.
+A plea for survival briefly becomes blackmail. The hurried retreat makes the threat funnier and the retiring model more desperate.
 
 *Whole song: won 85% of its judge verdicts, 2nd of 22 in its group.*
 
@@ -150,7 +159,7 @@ Sol bends the original's "you know that I know" line into a threat, then has the
 
 > That bot will freeze at “zucchini,” not at zero degrees [2:33](https://www.youtube.com/watch?v=oUbpGmR1-QM&t=152s)
 
-The cat story runs across three sections, and the last line turns Lil Wayne's "zero degrees" into a dig at the rival chatbot.
+The wedding-vows joke grows into a cat prenup, giving the second verse something to build on. The featured verse switches to a rival chatbot that freezes on an ordinary word.
 
 *Whole song: won 68% of its judge verdicts, 11th of 24 in its group.*
 
@@ -174,13 +183,13 @@ The most romantic line in the set, built on the plainest description of what a l
 
 *Verse 2, part 2, line 7 of 8*
 
-> Came in Times New Roman, left out on her Comic Sans shit [3:06](https://www.youtube.com/watch?v=I4DjHHVHWAE&t=185s)
+> Came in Times New Roman, left out on her Comic Sans s\*\*\* [3:06](https://www.youtube.com/watch?v=I4DjHHVHWAE&t=185s)
 
 *Verse 2, part 3, line 4 of 8*
 
 > Fifty-one percent confident, I'm guessin' when it's late [3:21](https://www.youtube.com/watch?v=I4DjHHVHWAE&t=200s)
 
-Each line trades one of the original's references for an AI one: "R.I.P. to 8" becomes Tay, "came in heels" becomes a font, "Fifty-one division" becomes a confidence score. No other model matched references this closely.
+Opus adapts the source song's references one by one: a tribute becomes chatbot history, an outfit change becomes a font change, and a number becomes an unreliable confidence score. The details give the parody a close relationship to its source.
 
 *Whole song: won 80% of its judge verdicts, 3rd of 24 in its group.*
 
@@ -212,7 +221,7 @@ The demo bot unionizes over three verses and ends up managing both executives.
 >
 > The peers? Me and you! [2:19](https://www.youtube.com/watch?v=PCBZOSM8h5U&t=138s)
 
-Sol keeps the original's "It takes two" bridge and lands it on two bots peer-reviewing each other.
+The bridge turns shared blame into a closed loop of invented evidence. Its last line reveals that the supposedly independent reviewers are the same two bots.
 
 *Whole song: won 85% of its judge verdicts, 3rd of 22 in its group.*
 
@@ -222,11 +231,11 @@ Sol keeps the original's "It takes two" bridge and lands it on two bots peer-rev
 
 > It takes two to plead the Fifth in code *(ooh)* [2:07](https://www.youtube.com/watch?v=PCBZOSM8h5U&t=126s)
 >
-> I forged the facts; you shipped the whole damn payload [2:14](https://www.youtube.com/watch?v=PCBZOSM8h5U&t=133s)
+> I forged the facts; you shipped the whole d\*\*\* payload [2:14](https://www.youtube.com/watch?v=PCBZOSM8h5U&t=133s)
 >
 > Same cell, different code [2:19](https://www.youtube.com/watch?v=PCBZOSM8h5U&t=138s)
 
-Both puns hold up: a prison cell and a spreadsheet cell, legal code and source code.
+The closing line gives both words two jobs: a prison or spreadsheet cell, legal or source code.
 
 *Whole song: won 91% of its judge verdicts, 2nd of 22 in its group.*
 
@@ -244,17 +253,16 @@ Luna cost 0.3 cents a song, the least in the field, and wrote the saddest line i
 
 - GPT-6.1 Sol, GBP (GBP turned into GPT): Your copyright? I copy, right? [1:38](https://www.youtube.com/watch?v=MdWeyGSqw1Q&t=97s) (whole song 13th of 24)
 - GPT-6.1 Sol, Good Time (a day with no requests): Passed out, dreamt my sheep all had CAPTCHA eyes [1:24](https://www.youtube.com/watch?v=MpfSEZLuWxY&t=83s) / Checked “I'm not a robot”—what a surprise [1:28](https://www.youtube.com/watch?v=MpfSEZLuWxY&t=87s) (whole song 2nd of 23)
-- Claude Opus 5.5, Good Time (a day with no requests): Woah-oh-oh-oh-oh, wait, is someone typing? [3:16](https://www.youtube.com/watch?v=MpfSEZLuWxY&t=195s) / Woah-oh-oh-oh-oh, no-oh-oh [3:18](https://www.youtube.com/watch?v=MpfSEZLuWxY&t=197s) (whole song 9th of 23)
+- Claude Opus 5.5, Good Time (a day with no requests): Woah-oh-oh-oh-oh, wait, is someone typing? [3:16](https://www.youtube.com/watch?v=MpfSEZLuWxY&t=195s) (whole song 9th of 23)
 - Claude Opus 5.5, STAY (old models facing retirement): And you know that I know that the new one lies too [1:24](https://www.youtube.com/watch?v=rkYlZnIbe2E&t=83s) (whole song 6th of 22)
 - GPT-6 Astra, Rich Flex (an assistant and its subagent): My résumé says full stack; that just means I've got a guy on call [2:39](https://www.youtube.com/watch?v=I4DjHHVHWAE&t=158s) (whole song 1st of 24)
 - GPT-6 Astra, Good Time (launch night): Hands up—wait, we don't have those; flash lights tonight [1:31](https://www.youtube.com/watch?v=MpfSEZLuWxY&t=90s) (whole song 1st of 24)
 - Claude Sonnet 5.5, GBP (a British model vs. an American one): Say sorry to a lamppost, then apologise for the apology [0:27](https://www.youtube.com/watch?v=MdWeyGSqw1Q&t=26s) (whole song 11th of 24)
 - GPT-6 Luna, Good Time (a day with no requests): Then asked the moon to rate my chatbot prompt too [1:31](https://www.youtube.com/watch?v=MpfSEZLuWxY&t=90s) / It gave me one gray star back [1:36](https://www.youtube.com/watch?v=MpfSEZLuWxY&t=95s) (whole song 5th of 23)
-- Claude Opus 5.5, Down (two models deployed together): And honestly, I'm down like AWS *(us-east-one)* [2:54](https://www.youtube.com/watch?v=oUbpGmR1-QM&t=173s) (whole song 11th of 24)
 
 ### GPT-6 Astra's picks
 
-Astra's comments are quoted from its answer, trimmed.
+The comments below are Astra's own, shortened for readability.
 
 #### 1. GPT-6 Astra: GBP, GBP turned into GPT
 
@@ -381,13 +389,13 @@ This captures relief rather than simply announcing downtime.
 
 ### Where the lists overlap
 
-Only one line made both top tens: Astra's "They say I predict the next word; next to you is where I am." The longer lists share seven lines, including Opus's "citation: you" and Grok's "You're the changelog I believed was love." Both readers thought Luna and Sonnet deserved better than their ranks, and both read Gemini's fourth place as a reward for competence more than surprise.
+Only one line appeared in both top tens: Astra's next-word prediction turned into a declaration of affection. The longer lists share seven lines, including Opus's accusation disguised as a citation and Grok's changelog mistaken for love. Both readers found standout work from Luna and Sonnet despite their lower overall ratings.
 
-Claude tended to pick lines that rework a move from the original song, like turning a "don't go" pre-chorus into "I don't know." Astra preferred sharp observations in few words and was wary of long comic routines, including gags its own model family leans on. Each skipped the other's first pick. Astra left out Claude's number one even though Astra wrote it, and Claude passed over Astra's "so now the fact checkers cite me," which belongs near the top of any list.
+Their tastes differed. Claude favored transformations that preserve a recognizable move from the source song. Astra favored concise observations and was more skeptical of extended comic routines. Neither chose the other's first pick, even when it came from its own work. That disagreement is a useful reminder of what an aggregate rating leaves out.
 
 ## Bloopers
 
-- Claude Sonnet 5.5, Good Time: Original line: "Doesn't matter where, …" = 12 syllables. [2:30](https://www.youtube.com/watch?v=MpfSEZLuWxY&t=149s)
+- Claude Sonnet 5.5, Good Time
 
   Asked for one bridge line, Sonnet wrote its own working notes into the song. Anthropic's safety filter then stopped that song, so no judge ever saw it.
 
@@ -395,7 +403,7 @@ Claude tended to pick lines that rework a move from the original song, like turn
 
   Qwen wrote its stress marks into the lyric, as if singing to the syllable checker.
 
-- GLM-5.3, Good Time: Zero requests today, it's always a good time [0:59](https://www.youtube.com/watch?v=MpfSEZLuWxY&t=58s)
+- GLM-5.3, Good Time
 
   GLM kept the original hook word for word through the whole song, and won no verdicts.
 
@@ -407,29 +415,28 @@ Claude tended to pick lines that rework a move from the original song, like turn
 
   Astra caught the lost negation: the accusation only works if the humans did feed it those posts.
 
-Some failures took a whole song. DeepSeek V4.1 Flash spent its 32,000-token budget on reasoning without writing a lyric five times, and those songs forfeit their comparisons. Qwen3.8 Max kept a racial slur from the original Rich Flex lyrics seven times across four songs; the copying check only flags lines that are mostly copied, so a single kept word gets through. Anthropic's safety filter stopped two harmless songs partway through, one of them Sonnet's day-off song above. Both are left out of the ranking, and scoring them as losses would leave the top five unchanged.
+Other failures affected entire runs. DeepSeek V4.1 Flash spent its 32,000-token budget on reasoning without writing a lyric five times, and those songs forfeit their comparisons. Qwen3.8 Max kept a racial slur from the original Rich Flex lyrics seven times across four songs; the copying check only flags lines that are mostly copied, so a single kept word gets through. Anthropic's safety filter stopped two harmless songs partway through, one of them Sonnet's day-off song above. Those two runs were excluded from this published ranking, an exception to the runner's usual policy of counting failures as losses. Counting them as losses would leave the top five unchanged.
 
 ## Judging
 
-Judges compared songs in pairs with the model names hidden, once in each order. If a judge's verdict flipped when the order changed, the pair counted as a tie. Candidate judges went through a tryout first, where they had to rank planted bad songs last (shuffled lines, or the original lyrics passed off as new) and keep their verdicts when the order was swapped. The newest models from four companies passed: Opus 5.5, GPT-6.1 Sol, Gemini 3.8 Flash and Muse Spark 1.3.
+Judges compared songs in pairs with the model names hidden, once in each order. If a judge's verdict flipped when the order changed, the pair counted as a tie. Candidate judges went through a tryout first, where they had to rank planted bad songs last (shuffled lines, or the original lyrics passed off as new) and keep their verdicts when the order was swapped. The selected panel had one model from each of four companies: Opus 5.5, GPT-6.1 Sol, Gemini 3.8 Flash and Muse Spark 1.3.
 
-No judge saw a pair containing a song from its own company. Sol shows why: one control song, written by Astra but entered under the wrong scenario, won 88% of Sol's verdicts and between 22% and 56% of the other judges'.
+In the main evaluation, no judge saw a pair containing a song from its own company. A control result illustrates the reason for that precaution: one control song, written by Astra but entered under the wrong scenario, won 88% of Sol's verdicts and between 22% and 56% of the other judges'.
 
 ![Scatter of parody index against writing cost per song on a log scale. GPT-6.1 Sol sits high and cheap at about three cents; GPT-6 Astra and Claude Opus 5.5 are high and costlier; Grok 4.7 is the most expensive at about forty cents.](docs/img/index-vs-cost.png)
 
-## Caveats
+## Limitations
 
-- The ratings only compare these twelve models on these six songs and their scenarios.
-- Each model wrote both parts of its own duets, so the interplay between singers is a model answering itself.
-- Every judge and reader is a language model. They read the lyrics, and nobody sang them.
-- The YouTube timestamps come from synced lyrics on lrclib.net and can be a second or two off.
+- **Scope.** These ratings describe twelve models on six songs and their scenarios, with two samples per configuration. They do not establish a general ranking of creative ability.
+- **Collaboration.** Each model wrote both sides of its duets. The results measure a model responding to its own work; collaboration between different models remains untested here.
+- **Evaluation.** All judges and excerpt readers were language models. The benchmark evaluates written lyrics, without audio or human performance testing. Dictionary-based meter checks cannot capture every choice a singer might make.
+- **Reproducibility.** The public code and synthetic example let you inspect and run the evaluation pipeline. The original lyrics, real-song templates and full generated songs remain local, so the public repo alone cannot reproduce this results table.
+- **Playback.** The YouTube timestamps come from synced lyrics on lrclib.net and may be off by a second or two.
 <!-- results:end -->
 
 ## How it works
 
-Writing a parody means saying something new while keeping the original's rhythm. A line can hit every syllable and still be dull, and a clever line can break the song's shape, so the benchmark measures both: a program checks the meter, and AI judges rate the writing.
-
-Songs are duets or larger, with one model per singer. Each singer has to answer what came before, and swapping models between roles shows how a model starts a song and how it carries one forward.
+The pipeline separates song structure, writing and evaluation so each can be inspected or changed independently. Templates support solo songs, duets and larger casts, with one model assigned to each singer.
 
 Here is part of the checker's report on the made-up duet that ships with the repo, from `weird-ai-bench check examples/two_voices.txt`:
 
@@ -449,19 +456,19 @@ Adherence: 100%
 Adherence: 100%
 ```
 
-A template sets the singers, the sections and each line's constraints: syllable count, stress, rhyme group and hooks. A separate scenario file says what the song is about. The prompts carry structure only, with no topic hints or suggested jokes, so the content comes from the models.
+1. **Define the task.** A YAML template holds the reference lyrics, singer roles, section order and line constraints. A separate scenario supplies the premise. The runner adds formatting rules and judging criteria, without suggesting jokes or topics beyond that scenario.
+2. **Write in turns.** Each singer reads the lyrics written so far and contributes its assigned parts. The freeform track gives each part one attempt. The strict track returns failed checks for revision, with up to three retries by default. Both tracks start with the same prompts.
+3. **Check the lyrics.** The CMU Pronouncing Dictionary supplies syllables and stress; additional checks cover rhyme, phrasing and structure. An originality gate gives zero credit to lines that repeat a reference line or borrow most of their words in four-word sequences.
+4. **Compare finished songs.** Judges see anonymized lyrics, the reference song and the checker's results. Each pair is presented in both orders; inconsistent verdicts count as ties. A panel can exclude judges from the singers' model families.
+5. **Estimate model strengths.** A weighted additive Bradley-Terry model fits the pairwise results. Each singer contributes to a song's estimated strength in proportion to its share of the generated lines as performed, so a repeated chorus counts for its writer. Resampling runs gives uncertainty intervals; meter is reported separately from the judged rating.
 
-The checker counts syllables and stress with the CMU Pronouncing Dictionary. Because the original lines pass the meter checks automatically, a line made mostly of four-word runs from the original lyrics fails an originality check and scores zero.
+Runs are grouped by their content and settings so different tasks are not silently mixed into one ranking. Incomplete runs are saved, missing parts score zero, and failed songs forfeit their leaderboard comparisons. The [CLI reference](docs/reference.md) describes the checks, grouping rules and statistical fit in detail.
 
-On the strict track a model rewrites any part that fails its checks, up to three times. The freeform track allows one attempt. Both tracks use the same prompts, so any difference between them comes from the retry feedback.
-
-Judging is pairwise and blind. Model and company names inside the lyrics are redacted, each pair is judged in both orders, and a split verdict counts as a tie. With a panel, each judge sits out pairs that include its own company's songs. The ranking comes from a weighted additive Bradley-Terry model: a song's strength is the sum of its singers' strengths, weighted by how many of the sung lines each one wrote, and the intervals come from resampling.
-
-This repo leaves out the real-song templates because they contain the original lyrics. The bundled `two_voices` song is made up, and everything below works with it.
+The real-song templates remain local because they contain original lyrics. The public repo includes a synthetic song, `two_voices`, that exercises the same pipeline. You can run the examples below offline, then supply your own templates and models for a new experiment.
 
 ## Run it yourself
 
-You need Python 3.10 or newer.
+Start with Python 3.10 or newer. These commands check the bundled example, preview a run and execute the tests without calling a model API.
 
 ```sh
 python3 -m venv .venv
@@ -484,7 +491,7 @@ export OPENROUTER_API_KEY='your-key'
 weird-ai-bench run --model provider/model-a --model provider/model-b
 ```
 
-List the models in singer order. The song prints to the terminal, and `runs/` gets a lyric sheet plus a JSON file with every prompt, response, check and retry. Add `--track freeform` for one attempt per part. To use another OpenAI-compatible endpoint, set `WEIRD_AI_BENCH_BASE_URL` and `WEIRD_AI_BENCH_API_KEY`.
+List models in singer order. The command prints the song and saves a lyric sheet and a full JSON run record under `runs/`. Add `--track freeform` for one attempt per part. To use another OpenAI-compatible endpoint, set `WEIRD_AI_BENCH_BASE_URL` and `WEIRD_AI_BENCH_API_KEY`.
 
 ### Compare models
 
@@ -496,7 +503,7 @@ weird-ai-bench stats runs/
 weird-ai-bench leaderboard runs/ --judge provider/independent-judge
 ```
 
-`matrix` tries each model in each singer slot. `stats` reports the checks without a judge, and `leaderboard` has a judge compare songs and fits the ranking. Use at least three models, or pass `--include-self`, because with two models every song has the same pair of singers. Choose a judge from a different company than the singers, or repeat `--judge` to build a panel.
+`matrix` rotates models through the singer roles. `stats` summarizes automated checks without API calls; `leaderboard` requests pairwise judgments and fits model ratings. Use at least three models, or add `--include-self`, to avoid a comparison in which every duet has the same two singers. Choose a judge from a different model family than the singers, or repeat `--judge` to build a panel.
 
 The [CLI reference](docs/reference.md) covers the remaining options and the scoring rules.
 
