@@ -41,7 +41,26 @@ The six songs and their credited artists:
 - [GBP](https://www.youtube.com/watch?v=MdWeyGSqw1Q) — Central Cee (feat. 21 Savage)
 - [Rich Flex](https://www.youtube.com/watch?v=I4DjHHVHWAE) — Drake (feat. 21 Savage)
 
-Each song received two scenarios suited to its mood: two agents blaming each other for a mess, for example, or a chatbot enjoying a day without requests. Each model attempted 24 songs on the freeform track, with no revisions based on checker feedback. It wrote both sides of each duet in separate conversations; the second singer could read the first singer's lyrics.
+### Scenarios and setup
+
+A scenario is a short writing brief supplied to the models before they begin. It sets the premise, the singers' roles and whom they are singing to. The song template supplies the reference lyrics and musical constraints; the scenario gives the parody a new situation to work with. Those premises come from the benchmark, while the models write the lyrics and invent what happens within them.
+
+Every model received the same two scenarios for each song. The scenarios were chosen to carry its mood into an AI setting: shared blame, loyalty, a plea to stay, a celebration or a boast.
+
+| Song | Scenario 1 | Scenario 2 |
+|---|---|---|
+| I Had Some Help | **Singing to the humans:** two fictional AI assistants address the people who train and use them. | **Shared blame:** two agents worked on a job that went badly wrong; each insists the other is at least half responsible. |
+| Down | **Deployed together:** one model asks a longtime model partner to stick with it, whatever happens; the partner answers in the featured verse. | **A user thinking of switching:** one assistant tries to keep a user from leaving for a rival, and the second singer backs up its pitch. |
+| STAY | **Let down again:** two assistants ask a frustrated user to stay after breaking earlier promises to improve. | **Facing retirement:** two older models plead with the team replacing them for one more chance to fix their repeated mistakes. |
+| Good Time | **Launch night:** two models celebrate finally shipping a long project. | **A day off:** two models have no requests to answer and sing about how they spend the time. |
+| GBP | **GBP becomes GPT:** two models show off their abilities and build on each other's verses, with GPT as the chorus hook. | **Across the Atlantic:** a model built in Britain and one built in the United States trade boasts about what each side does best. |
+| Rich Flex | **A fictional live demo:** comic versions of two AI company leaders share a stage. A confident host builds expectations, a measured collaborator delivers the demo, and the host returns to build on it. | **Delegation:** a main assistant calls in a specialist agent for jobs it cannot handle alone; the specialist shows what it can do. |
+
+Three briefs also give specific hook instructions. The first GBP scenario supplies the swap from GBP to GPT and asks for a new payoff ending in a three-syllable rhyme. The Rich Flex demo asks the host to call the guest by name in the chorus; the delegation scenario asks the main assistant to invent a three-syllable name for its specialist and keep that call throughout the hook. These are supplied constraints, so the models should not get credit for inventing those hook ideas. The live-demo brief also specifies the two characters' contrasting styles and asks the returning host to pick up something from the guest's verse.
+
+Each model attempted two songs per scenario, giving 24 songs per model. All runs used the freeform track, with no revisions based on checker feedback. One model wrote both sides of each duet in separate conversations, with earlier lyrics passed to the next singer. Judges received the scenario too and compared songs written for the same song and scenario, so a retirement plea was judged against other retirement pleas.
+
+### Scores
 
 | # | Model | Index | Meter | Cost per song |
 |--:|---|--:|--:|--:|
