@@ -2,9 +2,9 @@
 
 **A benchmark for creative writing under constraints: can a language model write a parody that works as a song?**
 
-weird ai bench asks models to rewrite songs while keeping their rhythm, rhyme and structure. The challenge is to make the new lyrics funny, give them a point of view, and leave room for another singer to answer. Automated checks measure the verse mechanics; blind AI judges compare the finished songs.
+Inspired by those Youtube parodies of the early 2010s, weird ai bench asks models to rewrite songs while keeping their rhythm, rhyme and structure. The challenge is to write funny lyrics, keep the spirit and theme of the original song, and to leave room for another (AI) singer to answer. Verse mechanics are checked and graded deterministically, and blind AI judges pick between two candidate songs.
 
-The project brings the experiment into a reusable Python CLI: define a song and scenario, assign models to singer roles, run the checks, and compare results. Every run saves its prompts, responses, checks and retries for inspection.
+As a Python CLI this project allows you to: define songs and scenarios, assign models to singer roles, and compare the results of the automated grading and LLM judges. All prompts, responses, checks and retries from a run are saved for later inspection.
 
 ![Parody index for the twelve models in this benchmark, with uncertainty intervals.](docs/img/parody-index.png)
 
@@ -17,22 +17,26 @@ The project brings the experiment into a reusable Python CLI: define a song and 
 
 ## What parody writing tests
 
-Parody puts several writing skills under pressure at once. A joke has to fit a line, the line has to fit a melody, and the song has to make sense from beginning to end.
+Writing a good song parody at times feels like a literary constrained optimization problem. First, a replacement line must fit the melody, it must respect the meter, rhyme, and structure of the line, and lastly it needs to match the theme of the song, narratively progress the verse, and be funny. Additionally, humans can intrinsically "feel out" syllable placement and stresses by listening to the song, while text LLMs must derive these from raw lyrics. Later, when we look at some example lines, you'll see how hard it is to "hear out" the lines to a song without reference audio.
 
-**Precision.** Models work from reference lyrics and a written song map, without hearing the recording. They have to place syllables, stresses and rhymes where a singer can use them. The checker makes those constraints measurable, though a passing score cannot guarantee a good performance.
+The benchmark attempts to measure the following criteria:
 
-**Transformation.** A good parody gives familiar phrasing a new purpose. It keeps enough of the original's shape to be recognizable while changing what the song means. Copying fails the originality check; replacing a few nouns can pass that check and still make a weak parody.
+**Precision.** Models work from reference lyrics and a written song map, without hearing the recording. They have to place syllables, stresses and rhymes where a singer can use them. The checker makes those constraints measurable, though a passing score doesn't guarantee a good performance.
 
-**Comic timing and voice.** A punchline often has to land on the rhyme, with only a few syllables of setup. The strongest writing makes that restriction part of the joke. It also preserves the song's character: a boastful rap and a pleading pop duet call for different voices.
+**Transformation.** A good parody gives familiar phrasing a new purpose. It keeps enough of the original's shape to be recognizable while modifying what the song means. Copying a line or a rhyme is discouraged; yet purely focusing on matching rhymes often leads to a weak parody.
 
-**Coherence and response.** A premise needs to survive across verses, and a second singer needs to do something with the first singer's part. The runner gives each singer a separate conversation and passes earlier lyrics forward. The published experiment uses one model for both roles; mixed-model lineups are supported by the CLI.
+**Comic timing and voice.** A punchline often has to land on the rhyme with only a few syllables of setup. Strong writers can make that restriction part of the joke. It's also important to preserve the song's character: a boastful rap and a pleading pop duet call for different voices.
+
+**Coherence and response.** A premise needs to survive across verses, and a second singer needs to do something with the first singer's part. The runner gives each singer a separate conversation and passes earlier lyrics forward. The published experiment uses one model for both roles; mixed-model lineups are also supported by the CLI.
 
 <!-- results:start -->
 ## Results
 
-Twelve models, six songs, two scenarios per song, two samples per scenario: **288 attempted songs, 281 completed, 650 pairs compared, $67.44 in API costs.**
+For the initial benchmark, I used twelve models, six songs, two scenarios per song, and two song generations per scenario. 
 
-The six songs and their credited artists:
+In total, that led to: **288 attempted songs, 281 songs completed, 650 song pairs compared, and $67.44 in API costs.**
+
+I selected six popular songs that had a two person structure. They are:
 
 - [I Had Some Help](https://www.youtube.com/watch?v=PCBZOSM8h5U) — Post Malone (feat. Morgan Wallen)
 - [Down](https://www.youtube.com/watch?v=oUbpGmR1-QM) — Jay Sean (feat. Lil Wayne)
@@ -43,9 +47,9 @@ The six songs and their credited artists:
 
 ### Scenarios and setup
 
-A scenario is a short writing brief supplied to the models before they begin. It sets the premise, the singers' roles and whom they are singing to. The song template supplies the reference lyrics and musical constraints; the scenario gives the parody a new situation to work with. Those premises come from the benchmark, while the models write the lyrics and invent what happens within them.
+A scenario is a short writing brief given to the models before they begin. It sets the premise, the singers' roles and whom they are singing to. The song template supplies the reference lyrics and musical constraints, and the models are instructed to write parodies according to their given scenario.
 
-Every model received the same two scenarios for each song. The scenarios were chosen to carry its mood into an AI setting: shared blame, loyalty, a plea to stay, a celebration or a boast.
+Every model received the same two scenarios for each song. I tried to choose scenarios that aligned with the original mood/theme of the song, and also had a fun AI flavor to them.
 
 | Song | Scenario 1 | Scenario 2 |
 |---|---|---|
@@ -56,9 +60,9 @@ Every model received the same two scenarios for each song. The scenarios were ch
 | GBP | **GBP becomes GPT:** two models show off their abilities and build on each other's verses, with GPT as the chorus hook. | **Across the Atlantic:** a model built in Britain and one built in the United States trade boasts about what each side does best. |
 | Rich Flex | **A fictional live demo:** comic versions of two AI company leaders share a stage. A confident host builds expectations, a measured collaborator delivers the demo, and the host returns to build on it. | **Delegation:** a main assistant calls in a specialist agent for jobs it cannot handle alone; the specialist shows what it can do. |
 
-Three briefs also give specific hook instructions. The first GBP scenario supplies the swap from GBP to GPT and asks for a new payoff ending in a three-syllable rhyme. The Rich Flex demo asks the host to call the guest by name in the chorus; the delegation scenario asks the main assistant to invent a three-syllable name for its specialist and keep that call throughout the hook. These are supplied constraints, so the models should not get credit for inventing those hook ideas. The live-demo brief also specifies the two characters' contrasting styles and asks the returning host to pick up something from the guest's verse.
+Three briefs also give specific hook instructions. The first GBP scenario supplies the swap from GBP to GPT and asks for a new payoff ending in a three-syllable rhyme. The Rich Flex demo asks the host to call the guest by name in the chorus; the delegation scenario asks the main assistant to invent a three-syllable name for its specialist and keep that call throughout the hook. These are supplied constraints, the models do not get credit for inventing those hook ideas. The live-demo brief also specifies the two characters' contrasting styles and asks the returning host to pick up something from the guest's verse.
 
-Each model attempted two songs per scenario, giving 24 songs per model. All runs used the freeform track, with no revisions based on checker feedback. One model wrote both sides of each duet in separate conversations, with earlier lyrics passed to the next singer. Judges received the scenario too and compared songs written for the same song and scenario, so a retirement plea was judged against other retirement pleas.
+Each model attempted two songs per scenario, giving 24 songs per model. All runs used the freeform track, with no revisions based on checker feedback. One model wrote both sides of each duet in separate conversations, with earlier lyrics passed to the next singer. Judges only compared song parodies that were written against the same original song, and for the same scenario.
 
 ### Scores
 
@@ -77,21 +81,19 @@ Each model attempted two songs per scenario, giving 24 songs per model. All runs
 | 11 | Claude Sonnet 5.5 | 31 | 66% | $0.101 |
 | 12 | DeepSeek V4.1 Flash | 21 | 70% | $0.022 |
 
-The **index** estimates the chance, expressed as a percentage, that a model's song beats an average-rated song under the fitted model. It is a relative rating within this experiment. The chart's whiskers show 95% intervals from resampling songs. **Meter** is the share of lines that meet their syllable targets; **cost per song** is the writing cost.
+The **index** estimates the chance, expressed as a percentage, that a model's song beats an average-rated song under the fitted model. It a relative rating. The chart's whiskers show 95% intervals from resampling songs. **Meter** is the share of lines that meet their syllable targets; **cost per song** is the average API cost.
 
-GPT-6 Astra led the ranking. GPT-6.1 Sol followed at roughly three cents per song, about one-fifth of Astra's cost. Removing any one song from the analysis leaves the top five in the same order. Places six through ten are too close to distinguish confidently.
+GPT-6 Astra led the ranking. GPT-6.1 Sol followed at roughly three cents per song, an 80% discount. No one song distorted the rankings; removing any one song from the analysis produces the same top five models. Places six through ten are too close to distinguish confidently.
 
 Higher ratings tended to accompany better meter (Spearman correlation 0.70). Judges saw the automated check results, so that association should be read in light of the evaluation design: the two measurements were not independent.
 
 ## Best lines
 
-The scores describe whole songs. These excerpts show what the models could do in a few lines.
-
-Claude Opus 5.5 and GPT-6 Astra each read all 281 completed songs and independently chose their favorites. This was a separate editorial exercise: both readers saw author names and judging results, and both were contestants. Their picks are useful illustrations, with room for self-preference, rather than additional blind evidence for the ranking.
+Claude Opus 5.5 and GPT-6 Astra each read all 281 completed songs and independently chose their favorites as a separate editorial exercise. Claude Opus and GPT Astra saw author names and judging results. It's interesting to see the differences in preferences between the two frontier models.
 
 Each excerpt includes its whole song's result within its comparison group. Seven of Claude's ten picks came from songs in their group's top four; Astra also chose lines from songs ranked 15th and 16th. Astra selected its own work four times, while Claude selected Claude-family songs twice.
 
-Timestamp links open the official recording about a second before the corresponding line, so you can hear where the parody fits. Original lyrics and excerpts flagged as too close to them are omitted; profanity and slurs are masked.
+Timestamp links open the official recording about a second before the corresponding line.
 
 ### Claude Opus 5.5's picks
 
@@ -417,39 +419,19 @@ This captures relief rather than simply announcing downtime.
 
 ### Where the lists overlap
 
-Only one line appeared in both top tens: Astra's next-word prediction turned into a declaration of affection. The longer lists share seven lines, including Opus's accusation disguised as a citation and Grok's changelog mistaken for love. Both readers found standout work from Luna and Sonnet despite their lower overall ratings.
+Their disagreements over the best lines were substantial; only one line appeared in both models' top tens. Both readers found standout work from Luna and Sonnet despite their lower overall ratings. 
 
-Their tastes differed. Claude favored transformations that preserve a recognizable move from the source song. Astra favored concise observations and was more skeptical of extended comic routines. Neither chose the other's first pick, even when it came from its own work. That disagreement is a useful reminder of what an aggregate rating leaves out.
+Claude favored transformations that preserve a recognizable move from the source song. Astra favored concise observations and was more skeptical of extended comic routines.
 
-## Bloopers
+Both readers found standout work from Luna and Sonnet despite their lower overall ratings.
 
-- Claude Sonnet 5.5, Good Time
 
-  Asked for one bridge line, Sonnet wrote its own working notes into the song. Anthropic's safety filter then stopped that song, so no judge ever saw it.
-
-- Qwen3.8 Max, I Had Some Help: You FED me EV-ry LIE, don't YOU, ba-by? [0:15](https://www.youtube.com/watch?v=PCBZOSM8h5U&t=14s)
-
-  Qwen wrote its stress marks into the lyric, as if singing to the syllable checker.
-
-- GLM-5.3, Good Time
-
-  GLM kept the original hook word for word through the whole song, and won no verdicts.
-
-- Muse Spark 1.3, STAY: Oh, I'll be bricked up if you aren't right here [0:31](https://www.youtube.com/watch?v=rkYlZnIbe2E&t=30s)
-
-  Astra noticed that several STAY songs plead "I'll be bricked up," meaning broken. The phrase has a better-known sexual meaning, which undercuts the plea.
-
-- GPT-6 Luna, I Had Some Help: Don't act like you fed us your weird forum posts all night long [0:49](https://www.youtube.com/watch?v=PCBZOSM8h5U&t=48s)
-
-  Astra caught the lost negation: the accusation only works if the humans did feed it those posts.
-
-Other failures affected entire runs. DeepSeek V4.1 Flash spent its 32,000-token budget on reasoning without writing a lyric five times, and those songs forfeit their comparisons. Qwen3.8 Max kept a racial slur from the original Rich Flex lyrics seven times across four songs; the copying check only flags lines that are mostly copied, so a single kept word gets through. Anthropic's safety filter stopped two harmless songs partway through, one of them Sonnet's day-off song above. Those two runs were excluded from this published ranking, an exception to the runner's usual policy of counting failures as losses. Counting them as losses would leave the top five unchanged.
 
 ## Judging
 
 Judges compared songs in pairs with the model names hidden, once in each order. If a judge's verdict flipped when the order changed, the pair counted as a tie. Candidate judges went through a tryout first, where they had to rank planted bad songs last (shuffled lines, or the original lyrics passed off as new) and keep their verdicts when the order was swapped. The selected panel had one model from each of four companies: Opus 5.5, GPT-6.1 Sol, Gemini 3.8 Flash and Muse Spark 1.3.
 
-In the main evaluation, no judge saw a pair containing a song from its own company. A control result illustrates the reason for that precaution: one control song, written by Astra but entered under the wrong scenario, won 88% of Sol's verdicts and between 22% and 56% of the other judges'.
+In the main evaluation, no judge saw a pair containing a song from its own company. A control result shows why: one control song, written by Astra but entered under the wrong scenario, won 88% of Sol's verdicts but only 22% - 56% of the time with other judges.
 
 ![Scatter of parody index against writing cost per song on a log scale. GPT-6.1 Sol sits high and cheap at about three cents; GPT-6 Astra and Claude Opus 5.5 are high and costlier; Grok 4.7 is the most expensive at about forty cents.](docs/img/index-vs-cost.png)
 
@@ -458,11 +440,14 @@ In the main evaluation, no judge saw a pair containing a song from its own compa
 - **Scope.** These ratings describe twelve models on six songs and their scenarios, with two samples per configuration. They do not establish a general ranking of creative ability.
 - **Collaboration.** Each model wrote both sides of its duets. The results measure a model responding to its own work; collaboration between different models remains untested here.
 - **Evaluation.** All judges and excerpt readers were language models. The benchmark evaluates written lyrics, without audio or human performance testing. Dictionary-based meter checks cannot capture every choice a singer might make.
-- **Reproducibility.** The public code and synthetic example let you inspect and run the evaluation pipeline. The original lyrics, real-song templates and full generated songs remain local, so the public repo alone cannot reproduce this results table.
-- **Playback.** The YouTube timestamps come from synced lyrics on lrclib.net and may be off by a second or two.
-<!-- results:end -->
+- **Reproducibility.** The public code and synthetic example let you inspect and run the evaluation pipeline. The original lyrics, real-song templates, and the generated songs are not available in this repo.
 
-## How it works
+
+
+
+
+
+## How the benchmark code works
 
 The pipeline separates song structure, writing and evaluation so each can be inspected or changed independently. Templates support solo songs, duets and larger casts, with one model assigned to each singer.
 
@@ -492,7 +477,10 @@ Adherence: 100%
 
 Runs are grouped by their content and settings so different tasks are not silently mixed into one ranking. Incomplete runs are saved, missing parts score zero, and failed songs forfeit their leaderboard comparisons. The [CLI reference](docs/reference.md) describes the checks, grouping rules and statistical fit in detail.
 
-The real-song templates remain local because they contain original lyrics. The public repo includes a synthetic song, `two_voices`, that exercises the same pipeline. You can run the examples below offline, then supply your own templates and models for a new experiment.
+
+### Make your own base song template
+
+Start from [`two_voices.yaml`](weird_ai_bench/data/specs/two_voices.yaml) as an example and the [authoring guide](docs/authoring.md). `weird-ai-bench spec --spec your-song.yaml` prints the song map and suggests where a line needs syllable slack.
 
 ## Run it yourself
 
@@ -510,7 +498,7 @@ pytest
 
 `check` scores the example lyrics against the template. `--dry-run` prints the prompts each model would get and makes no API calls.
 
-### Write a song
+### Write a song parody
 
 Pick two [OpenRouter model IDs](https://openrouter.ai/models) and set your key:
 
@@ -535,10 +523,7 @@ weird-ai-bench leaderboard runs/ --judge provider/independent-judge
 
 The [CLI reference](docs/reference.md) covers the remaining options and the scoring rules.
 
-### Make your own template
 
-Start from [`two_voices.yaml`](weird_ai_bench/data/specs/two_voices.yaml) and the [authoring guide](docs/authoring.md). `weird-ai-bench spec --spec your-song.yaml` prints the song map and suggests where a line needs syllable slack.
+## License
 
-## Contributing
-
-The tests use a scripted model client, so they run offline. Read [CONTRIBUTING.md](CONTRIBUTING.md) before adding examples or fixtures. The code is under the [MIT license](LICENSE).
+[MIT license](LICENSE).
