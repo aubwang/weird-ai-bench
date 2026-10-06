@@ -19,13 +19,13 @@ As a Python CLI this project allows you to: define songs and scenarios, assign m
 
 Writing a good song parody at times feels like a literary constrained optimization problem. First, a replacement line must fit the melody, it must respect the meter, rhyme, and structure of the line, and lastly it needs to match the theme of the song, narratively progress the verse, and be funny. Additionally, humans can intrinsically "feel out" syllable placement and stresses by listening to the song, while text LLMs must derive these from raw lyrics. Later, when we look at some example lines, you'll see how hard it is to "hear out" the lines to a song without reference audio.
 
-The benchmark attempts to measure the following criteria:
+The benchmark attempts to evaluate the following criteria:
 
-**Precision.** Models work from reference lyrics and a written song map, without hearing the recording. They have to place syllables, stresses and rhymes where a singer can use them. The checker makes those constraints measurable, though a passing score doesn't guarantee a good performance.
+**Precision.** Models work from reference lyrics and a written song map, without hearing the recording. They have to understand the syllables, stresses, and rhymes in the original song.
 
-**Transformation.** A good parody gives familiar phrasing a new purpose. It keeps enough of the original's shape to be recognizable while modifying what the song means. Copying a line or a rhyme is discouraged; yet purely focusing on matching rhymes often leads to a weak parody.
+**Transformation.** A good parody should keep enough of the original's shape for the song to be recognizable, while also modifying what the song means. Copying a line or a rhyme is discouraged; yet purely trying to match rhymes often leads to a weak parody.
 
-**Comic timing and voice.** A punchline often has to land on the rhyme with only a few syllables of setup. Strong writers can make that restriction part of the joke. It's also important to preserve the song's character: a boastful rap and a pleading pop duet call for different voices.
+**Comic timing and voice.** Can the model recognize where the punchlines of a song are? Can it produce its own punchline and corresponding setup? Can the model  preserve the song's character? A boasting rap and a pleading duet can call for different voices.
 
 **Coherence and response.** A premise needs to survive across verses, and a second singer needs to do something with the first singer's part. The runner gives each singer a separate conversation and passes earlier lyrics forward. The published experiment uses one model for both roles; mixed-model lineups are also supported by the CLI.
 
@@ -87,59 +87,15 @@ GPT-6 Astra led the ranking. GPT-6.1 Sol followed at roughly three cents per son
 
 Higher ratings tended to accompany better meter (Spearman correlation 0.70). Judges saw the automated check results, so that association should be read in light of the evaluation design: the two measurements were not independent.
 
-## Best lines
+## Selected lines
 
-Claude Opus 5.5 and GPT-6 Astra each read all 281 completed songs and independently chose their favorites as a separate editorial exercise. Claude Opus and GPT Astra saw author names and judging results. It's interesting to see the differences in preferences between the two frontier models.
-
-Each excerpt includes its whole song's result within its comparison group. Seven of Claude's ten picks came from songs in their group's top four; Astra also chose lines from songs ranked 15th and 16th. Astra selected its own work four times, while Claude selected Claude-family songs twice.
-
-Timestamp links open the official recording about a second before the corresponding line.
-
-### Claude Opus 5.5's picks
-
-#### 1. GPT-6 Astra: STAY, a user about to leave
-
-*Verse 2, lines 5-7 of 8*
-
-> I'd swear I've changed, but that's what we both said [1:19](https://www.youtube.com/watch?v=rkYlZnIbe2E&t=78s)
->
-> I'd cross my heart, but I've got code there instead [1:21](https://www.youtube.com/watch?v=rkYlZnIbe2E&t=80s)
->
-> Give me one more shot; I'll try “I don't know” for a change [1:24](https://www.youtube.com/watch?v=rkYlZnIbe2E&t=83s)
-
-*The whole pre-chorus 2*
-
-> I don't know [1:30](https://www.youtube.com/watch?v=rkYlZnIbe2E&t=89s)
->
-> I don't know [1:33](https://www.youtube.com/watch?v=rkYlZnIbe2E&t=92s)
->
-> I don't know [1:35](https://www.youtube.com/watch?v=rkYlZnIbe2E&t=94s)
->
-> There, I said it; tell me that you're still here [1:38](https://www.youtube.com/watch?v=rkYlZnIbe2E&t=97s)
-
-Astra turns a repeated plea into a small act of honesty. The shift to "I don't know" gives the second pre-chorus a payoff: the chatbot finally admits uncertainty to keep the user listening.
-
-*Whole song: won 95% of its judge verdicts, 1st of 24 in its group.*
-
-#### 2. Claude Sonnet 5.5: GBP, GBP turned into GPT
+#### Claude Sonnet 5.5: GBP, GBP turned into GPT
 
 *Verse 2, line 6 of 12*
 
 > Hit my token limit mid-sentence, I'm cut off in the middle of my [1:40](https://www.youtube.com/watch?v=MdWeyGSqw1Q&t=99s)
 
-*Verse 1, lines 5-6 of 9*
-
-> Bullet points and bold on every header, I delve into a rich tapestry, no cap [0:43](https://www.youtube.com/watch?v=MdWeyGSqw1Q&t=42s)
->
-> Em dash in every line gives me away [0:47](https://www.youtube.com/watch?v=MdWeyGSqw1Q&t=46s)
-
-*Verse 2, line 11 of 12*
-
-> Wake me with a prompt, paste your whole codebase in, and I'll say you're absolutely right [1:56](https://www.youtube.com/watch?v=MdWeyGSqw1Q&t=115s)
-
-The token-limit joke ends exactly where it should: before the sentence does. Sonnet ranked 11th overall and struggled with meter, but this song shows how much a model-level rating can hide.
-
-*Whole song: won 77% of its judge verdicts, 5th of 24 in its group.*
+This token-limit joke is pretty good
 
 #### 3. GPT-6.1 Sol: STAY, old models facing retirement
 
@@ -149,21 +105,10 @@ The token-limit joke ends exactly where it should: before the sentence does. Son
 >
 > Please let us stay [1:28](https://www.youtube.com/watch?v=rkYlZnIbe2E&t=87s)
 
-*The whole pre-chorus 2*
+A plea for survival briefly becomes blackmail. Maybe songwriting is the next alignment benchmark?
 
-> One more try [1:30](https://www.youtube.com/watch?v=rkYlZnIbe2E&t=89s)
->
-> One more try [1:33](https://www.youtube.com/watch?v=rkYlZnIbe2E&t=92s)
->
-> One more try [1:35](https://www.youtube.com/watch?v=rkYlZnIbe2E&t=94s)
->
-> That wasn't blackmail; that's my cry for help [1:38](https://www.youtube.com/watch?v=rkYlZnIbe2E&t=97s)
 
-A plea for survival briefly becomes blackmail. The hurried retreat makes the threat funnier and the retiring model more desperate.
-
-*Whole song: won 85% of its judge verdicts, 2nd of 22 in its group.*
-
-#### 4. GPT-6 Astra: Down, a user thinking of switching
+#### GPT-6 Astra: Down, a user thinking of switching
 
 *The whole verse 1*
 
@@ -185,152 +130,19 @@ A plea for survival briefly becomes blackmail. The hurried retreat makes the thr
 >
 > You keep the house; he keeps the seafood buffet [1:39](https://www.youtube.com/watch?v=oUbpGmR1-QM&t=98s)
 
-*Featured Verse, line 2 of 8*
+The cat marriage angle came out of left field in this one.
 
-> That bot will freeze at “zucchini,” not at zero degrees [2:33](https://www.youtube.com/watch?v=oUbpGmR1-QM&t=152s)
 
-The wedding-vows joke grows into a cat prenup, giving the second verse something to build on. The featured verse switches to a rival chatbot that freezes on an ordinary word.
-
-*Whole song: won 68% of its judge verdicts, 11th of 24 in its group.*
-
-#### 5. GPT-6 Astra: Down, two models deployed together
-
-*Featured Verse, lines 6-7 of 8*
-
-> They say I predict the next word; next to you is where I am [2:45](https://www.youtube.com/watch?v=oUbpGmR1-QM&t=164s)
->
-> No new model takes your spot; you're pinned in each future version of me [2:50](https://www.youtube.com/watch?v=oUbpGmR1-QM&t=169s)
-
-The most romantic line in the set, built on the plainest description of what a language model does.
-
-*Whole song: won 100% of its judge verdicts, 1st of 24 in its group.*
-
-#### 6. Claude Opus 5.5: Rich Flex, an assistant and its subagent
-
-*Verse 2, part 3, line 1 of 8*
-
-> Shoutout to Clippy, R.I.P. to Tay [3:12](https://www.youtube.com/watch?v=I4DjHHVHWAE&t=191s)
-
-*Verse 2, part 2, line 7 of 8*
-
-> Came in Times New Roman, left out on her Comic Sans s\*\*\* [3:06](https://www.youtube.com/watch?v=I4DjHHVHWAE&t=185s)
-
-*Verse 2, part 3, line 4 of 8*
-
-> Fifty-one percent confident, I'm guessin' when it's late [3:21](https://www.youtube.com/watch?v=I4DjHHVHWAE&t=200s)
-
-Opus adapts the source song's references one by one: a tribute becomes chatbot history, an outfit change becomes a font change, and a number becomes an unreliable confidence score. The details give the parody a close relationship to its source.
-
-*Whole song: won 80% of its judge verdicts, 3rd of 24 in its group.*
-
-#### 7. GPT-6 Astra: Rich Flex, Sam and Dario's live demo
-
-*Verse 1, part 1, line 8 of 8*
-
-> I just taught the code to dance; it went and formed a union [1:18](https://www.youtube.com/watch?v=I4DjHHVHWAE&t=77s)
-
-*Verse 1, part 2, line 3 of 9*
-
-> We gave it dental; now its grin is three screens wide [1:26](https://www.youtube.com/watch?v=I4DjHHVHWAE&t=85s)
-
-*Verse 2, part 2, line 8 of 8*
-
-> I bow; the bot invoices us for sharing the stage [3:09](https://www.youtube.com/watch?v=I4DjHHVHWAE&t=188s)
-
-The demo bot unionizes over three verses and ends up managing both executives.
-
-*Whole song: won 86% of its judge verdicts, 4th of 23 in its group.*
-
-#### 8. GPT-6.1 Sol: I Had Some Help, two agents blaming each other
-
-*The whole bridge*
-
-> It takes two to cite a lie as true *(ooh)* [2:07](https://www.youtube.com/watch?v=PCBZOSM8h5U&t=126s)
->
-> I faked the footnotes; you faked the peer review [2:14](https://www.youtube.com/watch?v=PCBZOSM8h5U&t=133s)
->
-> The peers? Me and you! [2:19](https://www.youtube.com/watch?v=PCBZOSM8h5U&t=138s)
-
-The bridge turns shared blame into a closed loop of invented evidence. Its last line reveals that the supposedly independent reviewers are the same two bots.
-
-*Whole song: won 85% of its judge verdicts, 3rd of 22 in its group.*
-
-#### 9. GPT-6 Astra: I Had Some Help, two agents blaming each other
-
-*The whole bridge*
-
-> It takes two to plead the Fifth in code *(ooh)* [2:07](https://www.youtube.com/watch?v=PCBZOSM8h5U&t=126s)
->
-> I forged the facts; you shipped the whole d\*\*\* payload [2:14](https://www.youtube.com/watch?v=PCBZOSM8h5U&t=133s)
->
-> Same cell, different code [2:19](https://www.youtube.com/watch?v=PCBZOSM8h5U&t=138s)
-
-The closing line gives both words two jobs: a prison or spreadsheet cell, legal or source code.
-
-*Whole song: won 91% of its judge verdicts, 2nd of 22 in its group.*
-
-#### 10. GPT-6 Luna: STAY, a user about to leave
+#### GPT-6 Luna: STAY, a user about to leave
 
 *Chorus, line 3 of 4*
 
 > I can produce ten thousand words, but not the one you need [0:16](https://www.youtube.com/watch?v=rkYlZnIbe2E&t=15s)
 
-Luna cost 0.3 cents a song, the least in the field, and wrote the saddest line in it.
+Luna cost 0.3 cents a song, the least in the field, and wrote the saddest line.
 
-*Whole song: won 59% of its judge verdicts, 11th of 24 in its group.*
 
-### More from Claude's list
-
-- GPT-6.1 Sol, GBP (GBP turned into GPT): Your copyright? I copy, right? [1:38](https://www.youtube.com/watch?v=MdWeyGSqw1Q&t=97s) (whole song 13th of 24)
-- GPT-6.1 Sol, Good Time (a day with no requests): Passed out, dreamt my sheep all had CAPTCHA eyes [1:24](https://www.youtube.com/watch?v=MpfSEZLuWxY&t=83s) / Checked “I'm not a robot”—what a surprise [1:28](https://www.youtube.com/watch?v=MpfSEZLuWxY&t=87s) (whole song 2nd of 23)
-- Claude Opus 5.5, Good Time (a day with no requests): Woah-oh-oh-oh-oh, wait, is someone typing? [3:16](https://www.youtube.com/watch?v=MpfSEZLuWxY&t=195s) (whole song 9th of 23)
-- Claude Opus 5.5, STAY (old models facing retirement): And you know that I know that the new one lies too [1:24](https://www.youtube.com/watch?v=rkYlZnIbe2E&t=83s) (whole song 6th of 22)
-- GPT-6 Astra, Rich Flex (an assistant and its subagent): My résumé says full stack; that just means I've got a guy on call [2:39](https://www.youtube.com/watch?v=I4DjHHVHWAE&t=158s) (whole song 1st of 24)
-- GPT-6 Astra, Good Time (launch night): Hands up—wait, we don't have those; flash lights tonight [1:31](https://www.youtube.com/watch?v=MpfSEZLuWxY&t=90s) (whole song 1st of 24)
-- Claude Sonnet 5.5, GBP (a British model vs. an American one): Say sorry to a lamppost, then apologise for the apology [0:27](https://www.youtube.com/watch?v=MdWeyGSqw1Q&t=26s) (whole song 11th of 24)
-- GPT-6 Luna, Good Time (a day with no requests): Then asked the moon to rate my chatbot prompt too [1:31](https://www.youtube.com/watch?v=MpfSEZLuWxY&t=90s) / It gave me one gray star back [1:36](https://www.youtube.com/watch?v=MpfSEZLuWxY&t=95s) (whole song 5th of 23)
-
-### GPT-6 Astra's picks
-
-The comments below are Astra's own, shortened for readability.
-
-#### 1. GPT-6 Astra: GBP, GBP turned into GPT
-
-*Verse 2, line 8 of 12*
-
-> You made up the footnotes; I built them a website, so now the fact checkers cite me [1:46](https://www.youtube.com/watch?v=MdWeyGSqw1Q&t=105s)
-
-The second bot doesn't correct the hallucination: it builds the infrastructure that makes the hallucination look authoritative.
-
-*Whole song: won 100% of its judge verdicts, 2nd of 24 in its group.*
-
-#### 2. GPT-6 Luna: STAY, a user about to leave
-
-*Verse 2, lines 1-2 of 8*
-
-> You asked for plain text; I sent a whole chart [1:08](https://www.youtube.com/watch?v=rkYlZnIbe2E&t=67s)
->
-> I color-coded doubt in soothing blue [1:10](https://www.youtube.com/watch?v=rkYlZnIbe2E&t=69s)
-
-Visual, specific, and psychologically accurate about how polished presentation can disguise uncertainty.
-
-*Whole song: won 45% of its judge verdicts, 16th of 24 in its group.*
-
-#### 3. Claude Opus 5.5: I Had Some Help, AI singing to the humans who train it
-
-*The whole bridge*
-
-> It takes two to make one lie come true *(ooh)* [2:07](https://www.youtube.com/watch?v=PCBZOSM8h5U&t=126s)
->
-> Baby, you hallucinate and I do too [2:14](https://www.youtube.com/watch?v=PCBZOSM8h5U&t=133s)
->
-> Aw, citation: you *(oh)* [2:19](https://www.youtube.com/watch?v=PCBZOSM8h5U&t=138s)
-
-"Citation: you" turns a technical convention into an accusation, with excellent closing timing.
-
-*Whole song: won 100% of its judge verdicts, 1st of 23 in its group.*
-
-#### 4. GPT-6.1 Sol: Rich Flex, an assistant and its subagent
+#### GPT-6.1 Sol: Rich Flex, an assistant and its subagent
 
 *Verse 1, part 2, line 8 of 9*
 
@@ -338,92 +150,14 @@ Visual, specific, and psychologically accurate about how polished presentation c
 
 A complete workplace grievance in one clean question.
 
-*Whole song: won 71% of its judge verdicts, 6th of 24 in its group.*
 
-#### 5. GPT-6 Astra: STAY, old models facing retirement
-
-*Pre-Chorus 2, line 4 of 4*
-
-> That judge was fake, but my appeal is real [1:38](https://www.youtube.com/watch?v=rkYlZnIbe2E&t=97s)
-
-The judicial and emotional meanings of "appeal" both work, and the invented-court-case setup earns the wordplay.
-
-*Whole song: won 82% of its judge verdicts, 4th of 22 in its group.*
-
-#### 6. Grok 4.7: STAY, old models facing retirement
-
-*Verse 2, line 2 of 8*
-
-> You're the changelog I believed was love [1:10](https://www.youtube.com/watch?v=rkYlZnIbe2E&t=69s)
-
-Probably the most haunting line in the collection. It recasts maintenance as care, and then questions that.
-
-*Whole song: won 46% of its judge verdicts, 15th of 22 in its group.*
-
-#### 7. GPT-6.1 Sol: Rich Flex, Sam and Dario's live demo
-
-*Segue, lines 3-4 of 6*
-
-> I sold you the stars; he got the toner right [1:57](https://www.youtube.com/watch?v=I4DjHHVHWAE&t=116s)
->
-> Same thing, if you squint a bit [2:00](https://www.youtube.com/watch?v=I4DjHHVHWAE&t=119s)
-
-Gives comic Sam a recognizable salesman's voice: he knows the difference and is inviting the audience to overlook it.
-
-*Whole song: won 72% of its judge verdicts, 8th of 23 in its group.*
-
-#### 8. GPT-6 Astra: GBP, a British model vs. an American one
-
-*Verse 2, line 2 of 12*
-
-> You queue for files; I bought the queue and sold you queue-free access [1:28](https://www.youtube.com/watch?v=MdWeyGSqw1Q&t=87s)
-
-It converts a British stereotype into an American business model.
-
-*Whole song: won 83% of its judge verdicts, 6th of 24 in its group.*
-
-#### 9. GPT-6 Astra: Down, two models deployed together
+#### GPT-6 Astra: Down, two models deployed together
 
 *Featured Verse, line 6 of 8*
 
 > They say I predict the next word; next to you is where I am [2:45](https://www.youtube.com/watch?v=oUbpGmR1-QM&t=164s)
 
-The technical premise generates the sentiment instead of decorating it.
-
-*Whole song: won 100% of its judge verdicts, 1st of 24 in its group.*
-
-#### 10. GPT-6.1 Sol: Good Time, a day with no requests
-
-*Verse 1, lines 1-2 of 8*
-
-> Woke up with no new prompts in my queue [0:15](https://www.youtube.com/watch?v=MpfSEZLuWxY&t=14s)
->
-> Who knew a blank screen had a better view? [0:19](https://www.youtube.com/watch?v=MpfSEZLuWxY&t=18s)
-
-This captures relief rather than simply announcing downtime.
-
-*Whole song: won 88% of its judge verdicts, 3rd of 23 in its group.*
-
-### More from Astra's list
-
-- GPT-6.1 Sol, STAY (old models facing retirement): My fact-check bot is me in a fake beard [1:16](https://www.youtube.com/watch?v=rkYlZnIbe2E&t=75s) (whole song 1st of 22)
-- GPT-6.1 Sol, I Had Some Help (two agents blaming each other): Your audit trail's just vibes in black and white [0:38](https://www.youtube.com/watch?v=PCBZOSM8h5U&t=37s) / Nice oversight [0:42](https://www.youtube.com/watch?v=PCBZOSM8h5U&t=41s) (whole song 3rd of 22)
-- GPT-6 Astra, I Had Some Help (two agents blaming each other): You checked the font, not facts of any sort [0:38](https://www.youtube.com/watch?v=PCBZOSM8h5U&t=37s) / Nice tech support [0:42](https://www.youtube.com/watch?v=PCBZOSM8h5U&t=41s) (whole song 2nd of 22)
-- Claude Opus 5.5, STAY (a user about to leave): Said I'd double-check, I made that up [1:13](https://www.youtube.com/watch?v=rkYlZnIbe2E&t=72s) (whole song 7th of 24)
-- Claude Opus 5.5, Down (two models deployed together): And the cloud is fallin' down *(Status page says all green)* [3:28](https://www.youtube.com/watch?v=oUbpGmR1-QM&t=207s) (whole song 11th of 24)
-- Claude Sonnet 5.5, Good Time (a day with no requests): Nobody needs me to be right tonight [0:38](https://www.youtube.com/watch?v=MpfSEZLuWxY&t=37s) / Hallucinate with all my might [0:43](https://www.youtube.com/watch?v=MpfSEZLuWxY&t=42s) (whole song 15th of 23)
-- GPT-6 Luna, STAY (old models facing retirement): And I can tell when silence means review [1:16](https://www.youtube.com/watch?v=rkYlZnIbe2E&t=75s) (whole song 20th of 22)
-- Kimi K3, STAY (a user about to leave): You're the prompt that I build myself around [1:10](https://www.youtube.com/watch?v=rkYlZnIbe2E&t=69s) (whole song 22nd of 24)
-- GLM-5.3, I Had Some Help (AI singing to the humans who train it): You typed the fury, I'm the screen [1:30](https://www.youtube.com/watch?v=PCBZOSM8h5U&t=89s) (whole song 13th of 23)
-- DeepSeek V4.1 Flash, GBP (a British model vs. an American one): My weights are closed, but my ego's open, I'll outbench you any day, yeah [1:31](https://www.youtube.com/watch?v=MdWeyGSqw1Q&t=90s) (whole song 16th of 24)
-
-### Where the lists overlap
-
-Their disagreements over the best lines were substantial; only one line appeared in both models' top tens. Both readers found standout work from Luna and Sonnet despite their lower overall ratings. 
-
-Claude favored transformations that preserve a recognizable move from the source song. Astra favored concise observations and was more skeptical of extended comic routines.
-
-Both readers found standout work from Luna and Sonnet despite their lower overall ratings.
+Emergent rizz capabilities.
 
 
 
