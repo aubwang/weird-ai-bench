@@ -194,8 +194,9 @@ def test_slack_hints_and_validation(tmp_path):
     spec = load_spec("two_voices")
     assert slack_hints(spec) == []
     assert slack_hints(spec, min_lines=1) == [
-        "Opening and Ending differ by up to 1 syllable on line 1. If they share a melody, "
-        "consider `slack` there."]
+        "Opening and Ending differ by up to 1 syllable on line 1. "
+        "Check the source phrasing; equal section lengths do not establish a shared melody. "
+        "Use explicit `prosody` settings only for verified alternatives."]
     spec.sections["ending"].lines[0].slack = 1
     assert slack_hints(spec, min_lines=1) == []
     raw = asdict(load_spec("two_voices"))
