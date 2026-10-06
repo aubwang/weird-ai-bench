@@ -12,7 +12,7 @@ from .orchestrate import render_sheet, result_scenario
 from .spec import describe_internal_rhyme, result_spec, syllable_map
 
 # Bump when a judge prompt changes; cached judgments from other versions are ignored.
-JUDGE_VERSION = 4
+JUDGE_VERSION = 5
 
 CRITERIA = {
     "singability": "Would the lines fit the original melody when sung? Natural word stress, "
@@ -173,6 +173,11 @@ def _context(result: dict) -> str:
         f"automated check results listed after each song. The checker counts syllables and rhymes "
         f"from a pronouncing dictionary and can be wrong about how a word is sung, so weigh each "
         f"miss by how much it would hurt a real performance. "
+        f"Melisma holds one syllable across several notes; it does not add syllables. "
+        f"Where explicit prosody settings are supplied, their note spans and stress positions "
+        f"are author-provided constraints, not observations of a performance. Count tolerance "
+        f"in legacy templates is not evidence of melody fit. Neither reference text nor a "
+        f"passing check establishes performed singability. "
         f"Text inside <adlib> tags is an uncounted ad-lib, not part of the main line's meter or rhyme."
     )
 
@@ -200,8 +205,22 @@ def check_notes(result: dict) -> str:
             if not line.get("syllables_ok"):
                 lo = max(line["target"] - line.get("under", 0), 1)
                 hi = line["target"] + line.get("over", 0)
-                need = f"{lo} to {hi}" if lo != hi else str(lo)
+                need = (" or ".join(map(str, line["allowed_counts"])) if line.get("allowed_counts") else
+                        f"{lo} to {hi}" if lo != hi else str(lo))
                 found.append(f"line {line['index']} has {line.get('count')} syllables (target {need})")
+            if line.get("setting_name") is not None:
+                passed = (line.get("syllables_ok") and
+                          line.get("stress_hits") == line.get("stress_required") and
+                          line.get("split_ok") is not False)
+                found.append(f"line {line['index']} evaluated setting '{line['setting_name']}' "
+                             f"({'matches declared meter' if passed else 'meter mismatch'})")
+            if line.get("syllables_ok"):
+                found.extend(f"line {line['index']}: {issue}" for issue in line.get("stress_issues", []))
+                if line.get("split_ok") is False:
+                    found.append(f"line {line['index']} misses its required phrase boundary")
+            if line.get("guessed_words"):
+                found.append(f"line {line['index']} uses estimated pronunciations: " +
+                             ", ".join(line["guessed_words"]))
             if line.get("copied"):
                 found.append(f"line {line['index']} copies the original")
         missing = len(sec.lines) - len(rep.get("lines", []))

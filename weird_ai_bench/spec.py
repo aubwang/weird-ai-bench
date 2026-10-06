@@ -23,8 +23,47 @@ class InternalRhymeSpec:
 
 
 @dataclass
+class ProsodySetting:
+    """One author-verified syllable grouping over a fixed sequence of notes.
+
+    A span of 2 means one syllable sustained over two notes, not two syllables.
+    Stress and phrase boundaries are syllable indices in this setting only.
+    These annotations do not supply pitches, durations, or audio evidence.
+    """
+
+    name: str
+    note_spans: list[int]
+    stress: list[int] = field(default_factory=list)
+    split: list[int] | None = None
+
+    def __post_init__(self):
+        if not isinstance(self.name, str) or not self.name.strip():
+            raise ValueError("prosody setting needs a nonempty name")
+        if (not isinstance(self.note_spans, list) or not self.note_spans or
+                any(type(n) is not int or n < 1 for n in self.note_spans)):
+            raise ValueError("prosody note_spans must be a nonempty list of positive whole numbers")
+        _validate_meter(self.syllables, self.stress, self.split)
+
+    @property
+    def syllables(self) -> int:
+        return len(self.note_spans)
+
+
+def _validate_meter(syllables, stress, split) -> None:
+    if type(syllables) is not int or syllables < 1:
+        raise ValueError("syllables must be a positive whole number")
+    if (not isinstance(stress, list) or
+            any(type(p) is not int or not 1 <= p <= syllables for p in stress) or
+            len(set(stress)) != len(stress)):
+        raise ValueError("stress must list distinct syllable positions from 1 to the syllable count")
+    if split is not None and (not isinstance(split, list) or len(split) != 2 or
+            any(type(n) is not int or n < 1 for n in split) or sum(split) != syllables):
+        raise ValueError("split must contain two positive whole numbers summing to syllables")
+
+
+@dataclass
 class LineSpec:
-    syllables: int
+    syllables: int | None = None
     stress: list[int] = field(default_factory=list)
     split: list[int] | None = None
     rhyme: str | None = None
@@ -36,9 +75,25 @@ class LineSpec:
     note: str | None = None
     reference: str | None = None
     adlibs: list[str] = field(default_factory=list)
-    # Syllables under and over the target that still fit the melody: one number
-    # for both sides, or [fewer, more].
+    # Legacy count tolerance, not evidence that a line fits a melody.
     slack: int | list[int] = 0
+    prosody: list[ProsodySetting] = field(default_factory=list)
+
+    def __post_init__(self):
+        parts = self.slack if isinstance(self.slack, list) and len(self.slack) == 2 else [self.slack]
+        if any(type(x) is not int or x < 0 for x in parts):
+            raise ValueError("line slack must be a whole number 0 or more, or [fewer, more]")
+        if not isinstance(self.prosody, list) or any(not isinstance(p, ProsodySetting) for p in self.prosody):
+            raise ValueError("prosody must be a list of settings")
+        if self.prosody:
+            if self.syllables is not None or self.stress or self.split is not None or any(parts):
+                raise ValueError("prosody replaces line syllables, stress, split, and slack; put meter in each setting")
+            if len({p.name for p in self.prosody}) != len(self.prosody):
+                raise ValueError("prosody setting names must be unique within a line")
+            if len({sum(p.note_spans) for p in self.prosody}) != 1:
+                raise ValueError("prosody settings must cover the same total number of notes")
+        else:
+            _validate_meter(self.syllables, self.stress, self.split)
 
 
 @dataclass
@@ -108,6 +163,16 @@ def _line(d: dict) -> LineSpec:
     unknown = set(d) - set(known)
     if unknown:
         raise ValueError(f"unknown line fields: {sorted(unknown)}")
+    prosody = d.get("prosody", [])
+    if not isinstance(prosody, list):
+        raise ValueError("prosody must be a list of settings")
+    if "prosody" in d and not prosody and d.get("syllables") is None:
+        raise ValueError("prosody must contain at least one setting")
+    for p in prosody:
+        if (not isinstance(p, dict) or set(p) - set(ProsodySetting.__dataclass_fields__) or
+                not {"name", "note_spans"} <= set(p)):
+            raise ValueError("prosody settings use name, note_spans, and optional stress and split")
+    d["prosody"] = [ProsodySetting(**p) for p in prosody]
     ir = d.get("internal_rhyme", False)
     if isinstance(ir, dict):
         if set(ir) - {"word_syllables", "end_word"}:
@@ -121,15 +186,11 @@ def _line(d: dict) -> LineSpec:
                                          not d["refrain"].strip()):
         raise ValueError("line refrain must be a nonempty group name")
     _validate_adlibs(d.get("adlibs", []))
-    slack = d.get("slack", 0)
-    parts = slack if isinstance(slack, list) and len(slack) == 2 else [slack]
-    if any(not isinstance(x, int) or isinstance(x, bool) or x < 0 for x in parts):
-        raise ValueError("line slack must be a whole number 0 or more, or [fewer, more]")
     return LineSpec(**d)
 
 
 def slack_bounds(ln: LineSpec) -> tuple[int, int]:
-    """How many syllables under and over the target still fit."""
+    """Legacy count tolerance; does not establish melody fit."""
     s = ln.slack
     return (s, s) if isinstance(s, int) else (s[0], s[1])
 
@@ -199,11 +260,6 @@ def spec_from_dict(raw: dict) -> SongSpec:
         for i, ln in enumerate(lines, 1):
             if ln.rhyme and ln.rhyme not in rhymes:
                 rhymes[ln.rhyme] = RhymeSpec()
-            for pos in ln.stress:
-                if not 1 <= pos <= ln.syllables:
-                    raise ValueError(f"{key} line {i}: stress position {pos} out of range")
-            if ln.split and sum(ln.split) != ln.syllables:
-                raise ValueError(f"{key} line {i}: split {ln.split} != {ln.syllables}")
         if sec.trade and len(sec.trade) != len(lines):
             raise ValueError(f"{key}: trade list must have one singer per line")
         if not (sec.singer or sec.is_chorus or sec.is_trade):
@@ -310,9 +366,12 @@ def describe_internal_rhyme(rule: bool | InternalRhymeSpec) -> str:
 def describe_line(ln: LineSpec, idx: int, rhymes: dict[str, RhymeSpec]) -> str:
     """One-line human description of a line's constraints, used in prompts."""
     fewer, more = slack_bounds(ln)
-    parts = [f"{ln.syllables} syllables" + (
-        f" ({max(ln.syllables - fewer, 1)} to {ln.syllables + more} fits)" if fewer or more else "")]
-    if ln.split:
+    parts = (["one complete declared prosody setting: " +
+              " OR ".join(describe_setting(p) for p in ln.prosody)] if ln.prosody else
+             [f"{ln.syllables} syllables" + (
+                 f" (legacy count range {max(ln.syllables - fewer, 1)} to {ln.syllables + more})"
+                 if fewer or more else "")])
+    if ln.split and not ln.prosody:
         parts.append(f"phrased {ln.split[0]} + {ln.split[1]} with a pause (comma or dash) after syllable {ln.split[0]}")
     if ln.stress:
         parts.append("stressed syllables on " + ", ".join(str(p) for p in ln.stress))
@@ -335,6 +394,16 @@ def describe_line(ln: LineSpec, idx: int, rhymes: dict[str, RhymeSpec]) -> str:
     if ln.note:
         parts.append(ln.note)
     return f"Line {idx}: " + "; ".join(parts)
+
+
+def describe_setting(setting: ProsodySetting) -> str:
+    parts = [f"{setting.name}: {setting.syllables} syllables",
+             "notes per syllable [" + ", ".join(map(str, setting.note_spans)) + "]"]
+    if setting.stress:
+        parts.append("stressed syllables on " + ", ".join(map(str, setting.stress)))
+    if setting.split:
+        parts.append(f"pause (comma or dash) after syllable {setting.split[0]}")
+    return "(" + "; ".join(parts) + ")"
 
 
 def describe_section(sec: SectionSpec) -> str:
@@ -364,11 +433,10 @@ def describe_section(sec: SectionSpec) -> str:
 
 
 def slack_hints(spec: SongSpec, min_lines: int = 3) -> list[str]:
-    """Where same-length sections disagree on syllable counts but have no slack.
+    """Flag differing legacy counts for manual review, without inferring melody.
 
-    If those sections are sung to one melody, the melody stretches there, so the
-    lines may deserve slack. Only a hint: the template doesn't record which
-    sections share a melody.
+    Kept under its old public name for compatibility. Equal section lengths do
+    not establish a shared melody or justify widening the accepted counts.
     """
     secs = [s for s in spec.sections.values()
             if not s.is_chorus and not s.is_trade and len(s.lines) >= min_lines]
@@ -379,13 +447,15 @@ def slack_hints(spec: SongSpec, min_lines: int = 3) -> list[str]:
                 continue
             diffs = {n: abs(x.syllables - y.syllables)
                      for n, (x, y) in enumerate(zip(a.lines, b.lines), 1)
-                     if x.syllables != y.syllables and not any(slack_bounds(x) + slack_bounds(y))}
+                     if not x.prosody and not y.prosody and x.syllables != y.syllables
+                     and not any(slack_bounds(x) + slack_bounds(y))}
             if diffs:
                 hints.append(
                     f"{a.label} and {b.label} differ by up to {max(diffs.values())} "
                     f"syllable{'s' if max(diffs.values()) > 1 else ''} on "
-                    f"line{'s' if len(diffs) > 1 else ''} {', '.join(map(str, diffs))}. If they "
-                    f"share a melody, consider `slack` there.")
+                    f"line{'s' if len(diffs) > 1 else ''} {', '.join(map(str, diffs))}. "
+                    "Check the source phrasing; equal section lengths do not establish a shared melody. "
+                    "Use explicit `prosody` settings only for verified alternatives.")
     return hints
 
 
@@ -395,6 +465,7 @@ def syllable_map(spec: SongSpec) -> str:
     for key in spec.performance_order:
         sec = spec.sections[key]
         counts = " / ".join(
+            " OR ".join(describe_setting(p) for p in ln.prosody) if ln.prosody else
             f"{ln.split[0]}+{ln.split[1]}" if ln.split else str(ln.syllables) for ln in sec.lines
         )
         rows.append(f"{sec.label}: {counts}")

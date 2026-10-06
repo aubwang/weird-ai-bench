@@ -1,7 +1,10 @@
 include CONTRIBUTING.md
 include docs/authoring.md
 include docs/reference.md
+include docs/song-export.md
 include examples/two_voices.txt
+include examples/melisma.yaml
+include examples/melisma.txt
 
 prune docs/local
 prune songs/local

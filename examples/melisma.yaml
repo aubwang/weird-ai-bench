@@ -1,0 +1,22 @@
+# Synthetic annotation example, not a transcription or audio-fit test.
+id: held_notes
+title: Held Notes
+artist: synthetic example
+singers: 1
+generation_order: [verse]
+performance_order: [verse]
+sections:
+  verse:
+    label: Verse
+    singer: 1
+    lines:
+      - reference: "The sky, is bright"
+        prosody:
+          - name: four-attacks
+            note_spans: [1, 1, 1, 1]
+            stress: [2, 4]
+            split: [2, 2]
+          - name: held-ending
+            note_spans: [1, 1, 2]
+            stress: [2, 3]
+            split: [2, 1]

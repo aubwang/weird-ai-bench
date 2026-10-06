@@ -72,7 +72,11 @@ def system_prompt(spec: SongSpec, cfg, scenario: Scenario, singer: int,
     if guided(cfg):
         rules = [
             fmt,
-            "Count syllables as they're sung. Spell out numbers as words.",
+            "Count syllables as they're sung. Spell out numbers as words. A syllable held over "
+            "several notes (melisma) is still one syllable. When a line lists prosody settings, "
+            "use one complete setting, including its own stress positions and pause. Do not mix "
+            "settings or invent extra allowed syllables. The text checker verifies these authored "
+            "constraints; it cannot hear or establish the melody.",
             "Mark ad-libs with <adlib>...</adlib> on the same line, e.g. "
             "We head home <adlib>home</adlib>. Ad-libs don't count toward syllables, stress, "
             "splits, or rhyme. Parenthesized trailing ad-libs are also accepted. "

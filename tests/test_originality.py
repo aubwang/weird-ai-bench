@@ -125,7 +125,7 @@ def old_copying_run(**cfg):
 def test_rescore_of_an_old_run_adds_the_originality_gate():
     old = old_copying_run(max_retries=0)
     new = rescore(old)
-    assert new["scoring_version"] == SCORING_VERSION == 3
+    assert new["scoring_version"] == SCORING_VERSION == 4
     assert new["config"]["gates"] == list(GATES) and old["config"]["gates"] == list(GATES[:6])
     assert not new["scores"]["strict_pass"]
     assert not any(t["final_pass"] for t in new["turns"])
