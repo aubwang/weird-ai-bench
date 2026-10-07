@@ -1,5 +1,6 @@
 """Leaderboard: the Bradley-Terry fit, credit weights, pair selection, forfeits, and stats."""
 
+import copy
 import json
 import math
 import random
@@ -11,7 +12,7 @@ from weird_ai_bench import leaderboard as lb
 from weird_ai_bench.judge import JUDGE_VERSION
 from weird_ai_bench.leaderboard import fit_additive_bt, gate_stats, group_key, leaderboard, singer_weights
 from weird_ai_bench.llm import ScriptedClient
-from weird_ai_bench.orchestrate import RunConfig, Song
+from weird_ai_bench.orchestrate import RunConfig, Song, rescore
 from weird_ai_bench.spec import load_spec
 
 SPEC = asdict(load_spec("two_voices"))
@@ -175,6 +176,29 @@ def test_group_key_splits_settings_that_change_outcomes():
     assert group_key(old) == group_key(fake_run("s", ["a/x", "b/y"], tolerance=0, max_retries=3))
 
 
+@pytest.mark.parametrize("track", ["strict", "freeform"])
+def test_group_key_keeps_evaluation_versions_separate(track):
+    old = fake_run("r", ["a/x", "b/y"], track=track)
+    assert group_key(old) == group_key(dict(old, scoring_version=1))
+    assert group_key(old) != group_key(dict(old, scoring_version=4))
+    # Even when generation was identical, current evaluation rules must match.
+    assert group_key(dict(old, scoring_version=3, generation_scoring_version=3)) != group_key(
+        dict(old, scoring_version=4, generation_scoring_version=3))
+
+
+def test_group_key_preserves_strict_generation_rules_after_rescoring():
+    old = dict(fake_run("r", ["a/x", "b/y"]), scoring_version=3)
+    explicit = dict(old, generation_scoring_version=3)
+    assert group_key(old) == group_key(explicit)
+    rescored = dict(explicit, scoring_version=4)
+    fresh = dict(rescored, generation_scoring_version=4)
+    assert group_key(rescored) != group_key(fresh)
+    # No retry feedback shapes freeform generation, so its historical rules are irrelevant.
+    rescored["config"] = {**rescored["config"], "track": "freeform"}
+    fresh["config"] = {**fresh["config"], "track": "freeform"}
+    assert group_key(rescored) == group_key(fresh)
+
+
 def test_win_rate_ignores_games_where_the_model_has_equal_credit(tmp_path, monkeypatch):
     a_wins(monkeypatch)
 
@@ -247,6 +271,98 @@ def test_judgments_are_cached_and_ignored_across_judge_versions(tmp_path):
     leaderboard(runs, judge, "j/judge", cache, bootstrap=0)
     assert judge.calls == 4
     assert len(cache.read_text().splitlines()) == 2 * len(stale)  # old lines are kept
+
+
+def test_cached_judgments_follow_inputs_when_pair_order_is_reversed(tmp_path):
+    runs = [fake_run("r1", ["a/x", "b/y"]), fake_run("r2", ["b/y", "a/x"])]
+    cache = tmp_path / "c.jsonl"
+    judge = Judge()
+    first = leaderboard(runs, judge, "j/judge", cache, bootstrap=0, pairs=[("r1", "r2")])
+    saved = cache.read_bytes()
+    second = leaderboard(runs, judge, "j/judge", cache, bootstrap=0, pairs=[("r2", "r1")])
+    assert judge.calls == 2
+    assert first["records"] == second["records"]
+    assert cache.read_bytes() == saved
+
+
+@pytest.mark.parametrize("change", ["lyrics", "checks", "scenario", "template", "reference"])
+def test_judgments_are_invalidated_when_blind_inputs_change(tmp_path, change):
+    runs = copy.deepcopy([fake_run("r1", ["a/x", "b/y"]), fake_run("r2", ["b/y", "a/x"])])
+    runs[0]["verification"] = {"opening": {"lines": [
+        {"index": 1, "target": 4, "count": 4, "syllables_ok": True}]}}
+    original = copy.deepcopy(runs)
+    cache = tmp_path / "c.jsonl"
+    judge = Judge()
+    leaderboard(runs, judge, "j/judge", cache, bootstrap=0, mix=True)
+    saved = cache.read_bytes()
+    if change == "lyrics":
+        runs[0]["parts"]["opening"]["lines"] = ["We see the stars"]
+    elif change == "checks":
+        runs[0]["verification"]["opening"]["lines"][0].update(count=5, syllables_ok=False)
+    elif change == "scenario":
+        runs[0]["scenario_snapshot"]["text"] = "another synthetic setup"
+    elif change == "template":
+        runs[0]["spec_snapshot"]["sections"]["opening"]["lines"][0]["syllables"] = 5
+    else:
+        runs[0]["spec_snapshot"]["sections"]["opening"]["lines"][0]["reference"] = "We see the stars"
+    leaderboard(runs, judge, "j/judge", cache, bootstrap=0, mix=True)
+    assert judge.calls == 4
+    assert cache.read_bytes().startswith(saved)
+    assert len(cache.read_text().splitlines()) == 2
+    # Both versions remain usable when the same blind inputs are seen again.
+    leaderboard(original, judge, "j/judge", cache, bootstrap=0, mix=True)
+    leaderboard(runs, judge, "j/judge", cache, bootstrap=0, mix=True)
+    assert judge.calls == 4
+
+
+def test_same_version_rescore_invalidates_judgment_cache(tmp_path):
+    lyrics = ["We watch the light\nWe walk back home", "The sky is bright",
+              "You take the road", "I take the train", "Now we walk back home"]
+    runs = [Song(RunConfig(models, track="freeform"),
+                 ScriptedClient([f"<lyrics>{text}</lyrics>" for text in lyrics])).run()
+            for models in (["a/x", "b/y"], ["b/y", "a/x"])]
+    cache = tmp_path / "c.jsonl"
+    judge = Judge()
+    leaderboard(runs, judge, "j/judge", cache, bootstrap=0)
+    revised = load_spec("two_voices")
+    revised.syllable_overrides["bright"] = 2
+    rescored = [rescore(r, revised) for r in runs]
+    assert [r["scoring_version"] for r in rescored] == [r["scoring_version"] for r in runs]
+    assert rescored[0]["verification"] != runs[0]["verification"]
+    leaderboard(rescored, judge, "j/judge", cache, bootstrap=0)
+    assert judge.calls == 4
+
+
+def test_cache_ignores_changes_outside_blind_inputs(tmp_path):
+    runs = [fake_run("r1", ["a/x", "b/y"]), fake_run("r2", ["b/y", "a/x"])]
+    cache = tmp_path / "c.jsonl"
+    judge = Judge()
+    leaderboard(runs, judge, "j/judge", cache, bootstrap=0)
+    runs[0]["usage"] = {"cost": 12.0}
+    runs[0]["created"] = "a different creation timestamp"
+    runs[0]["scores"]["by_singer"]["1"]["adherence"] = 0.5
+    leaderboard(runs, judge, "j/judge", cache, bootstrap=0)
+    assert judge.calls == 2
+
+
+@pytest.mark.parametrize("hashes", [{}, {"a_input_sha256": "a" * 64},
+                                   {"a_input_sha256": None, "b_input_sha256": "b" * 64},
+                                   {"a_input_sha256": "x" * 64, "b_input_sha256": "b" * 64}])
+def test_unverifiable_cache_rows_are_ignored_and_never_rewritten(tmp_path, hashes):
+    runs = [fake_run("r1", ["a/x", "b/y"]), fake_run("r2", ["b/y", "a/x"])]
+    cache = tmp_path / "c.jsonl"
+    old = {"a": "r1", "b": "r2", "winner": "a", "score_a": 1.0, "votes": ["a", "a"],
+           "judge": "j/judge", "judge_version": JUDGE_VERSION, **hashes}
+    saved = json.dumps(old) + "\n"
+    cache.write_text(saved)
+    judge = Judge()
+    cached = leaderboard(runs, judge, "j/judge", cache, bootstrap=0, cached_only=True)
+    assert cached["pairs"] == 0 and judge.calls == 0
+    assert cache.read_text() == saved
+    fresh = leaderboard(runs, judge, "j/judge", cache, bootstrap=0)
+    assert fresh["pairs"] == 1 and judge.calls == 2
+    assert cache.read_text().startswith(saved)
+    assert len(cache.read_text().splitlines()) == 2
 
 
 def test_flip_rate_counts_disagreeing_votes(tmp_path, monkeypatch):

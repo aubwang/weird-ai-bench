@@ -53,6 +53,11 @@ class RunConfig:
 
     def validate(self, spec: SongSpec | None = None, scenario: Scenario | None = None) -> None:
         """Check the settings; with a spec and scenario, also check they fit this song."""
+        if type(self.tolerance) is not int or self.tolerance < 0:
+            raise ConfigError("tolerance must be a whole number 0 or more.")
+        if (spec is not None and self.tolerance and
+                any(line.prosody for sec in spec.sections.values() for line in sec.lines)):
+            raise ConfigError("Exact prosody settings cannot use --tolerance; use --tolerance 0.")
         self.chorus = str(self.chorus)
         for name, val, allowed in (("names", self.names, NAMES), ("track", self.track, TRACKS),
                                    ("guidance", self.guidance, GUIDANCE)):
@@ -394,6 +399,7 @@ class Song:
         authors = {k: self.authors.get(k) or self._intended_author(k) for k in spec.generation_order}
         result = {
             "version": 2,
+            "generation_scoring_version": SCORING_VERSION,
             "id": _run_id(cfg, self.scenario.id),
             "created": datetime.now(timezone.utc).isoformat(timespec="seconds"),
             "spec": spec.id,
@@ -420,10 +426,13 @@ def rescore(result: dict, spec: SongSpec | None = None) -> dict:
     """Re-check a saved run under the current parser and rules, without calling a model.
 
     Every attempt is re-parsed from its raw response and re-checked, so pass rates
-    reflect today's rules; retries stay as they happened. Pass `spec` to score
-    against a revised template of the same shape; it replaces the run's snapshot.
+    reflect today's rules; retries and their generation rule version stay as they
+    happened. Pass `spec` to score against a revised template of the same shape;
+    it replaces the run's snapshot.
     """
     result = copy.deepcopy(result)
+    # Re-evaluation changes the scores, not the rules that shaped the original retries.
+    result.setdefault("generation_scoring_version", result.get("scoring_version", 1))
     old = result_spec(result)
     if spec is not None:
         shape = lambda sp: {k: len(sec.lines) for k, sec in sp.sections.items()}

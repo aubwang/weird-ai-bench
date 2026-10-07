@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import heapq
 import itertools
 import json
@@ -11,7 +12,7 @@ from collections import defaultdict
 from dataclasses import asdict
 from pathlib import Path
 
-from .judge import JUDGE_VERSION, pairwise
+from .judge import JUDGE_VERSION, _context, _sheet, criteria, pairwise
 from .llm import family
 from .spec import result_spec
 from .verify import GATES
@@ -48,9 +49,12 @@ def group_key(run: dict) -> tuple:
     # Retries and gates only shape strict songs.
     retries = c.get("max_retries", 3) if strict else None
     gates = tuple(sorted(c.get("gates") or GATES)) if strict else None
+    evaluation_version = run.get("scoring_version", 1)
+    # Rescoring does not change which rules shaped a strict run's retry feedback.
+    generation_version = run.get("generation_scoring_version", evaluation_version) if strict else None
     return (template, scenario, c["names"], c["chorus"], c["track"], c.get("guidance", "full"),
             reference, supplied, c.get("tolerance", 0), retries, gates,
-            c.get("temperature"), c.get("effort"))
+            c.get("temperature"), c.get("effort"), evaluation_version, generation_version)
 
 
 def singer_weights(run: dict) -> dict[str, float]:
@@ -313,7 +317,7 @@ def leaderboard(runs: list[dict], client, judge_model: str | list[str], cache_pa
     """
     log = log or (lambda m: None)
     judges = [judge_model] if isinstance(judge_model, str) else list(dict.fromkeys(judge_model))
-    cache: dict[str, dict] = {}
+    cache: dict[tuple, dict] = {}
     if cache_path.exists():
         for line in cache_path.read_text().splitlines():
             if not line.strip():
@@ -322,8 +326,13 @@ def leaderboard(runs: list[dict], client, judge_model: str | list[str], cache_pa
                 c = json.loads(line)
             except json.JSONDecodeError:
                 continue
-            if c.get("judge_version") == JUDGE_VERSION:
-                cache[_ckey(c["judge"], c["a"], c["b"])] = c
+            # Legacy rows cannot establish which lyrics/checks were judged. Leave them
+            # on disk, but never infer their inputs from today's possibly rescored runs.
+            if (isinstance(c, dict) and c.get("judge_version") == JUDGE_VERSION
+                    and all(isinstance(c.get(k), str) for k in ("judge", "a", "b"))
+                    and all(_is_sha256(c.get(k)) for k in ("a_input_sha256", "b_input_sha256"))):
+                cache[_ckey(c["judge"], c["a"], c["b"],
+                            c["a_input_sha256"], c["b_input_sha256"])] = c
 
     warnings: list[str] = []
     groups: dict[tuple, list[int]] = defaultdict(list)
@@ -380,6 +389,7 @@ def leaderboard(runs: list[dict], client, judge_model: str | list[str], cache_pa
 
     comparisons, records, pair_idx = [], [], []
     conflicted, shared, agreed, skipped = 0, 0, 0, 0
+    input_hashes: dict[int, str] = {}
     with cache_path.open("a") as fh:
         for n, (i, j) in enumerate(pairs, 1):
             a, b = runs[i], runs[j]
@@ -390,11 +400,14 @@ def leaderboard(runs: list[dict], client, judge_model: str | list[str], cache_pa
                          "score_a": score, "votes": [], "judge": "forfeit",
                          "judge_version": JUDGE_VERSION, "consistent": True}]
             else:
+                for idx in (i, j):
+                    if idx not in input_hashes:
+                        input_hashes[idx] = _judge_input_hash(runs[idx])
                 panel, forced = panel_for(judges, a, b)
                 conflicted += forced
                 recs = []
                 for judge in panel:
-                    key = _ckey(judge, a["id"], b["id"])
+                    key = _ckey(judge, a["id"], b["id"], input_hashes[i], input_hashes[j])
                     if key in cache:
                         rec = cache[key]
                     elif cached_only:
@@ -403,8 +416,11 @@ def leaderboard(runs: list[dict], client, judge_model: str | list[str], cache_pa
                         log(f"  judging pair {n}/{len(pairs)} with {judge}")
                         rec = pairwise(a, b, client, judge)
                         rec.setdefault("judge_version", JUDGE_VERSION)
+                        rec["a_input_sha256"] = input_hashes[i]
+                        rec["b_input_sha256"] = input_hashes[j]
                         fh.write(json.dumps(rec) + "\n")
                         fh.flush()
+                        cache[key] = rec
                     recs.append(rec)
             if not recs:
                 skipped += 1
@@ -468,6 +484,17 @@ def _bootstrap(runs, groups, comparisons, pair_idx, strengths, reps, seed, prior
             for m in strengths if draws[m]}
 
 
-def _ckey(judge: str, a: str, b: str) -> str:
-    x, y = sorted([a, b])
-    return f"{judge}|v{JUDGE_VERSION}|{x}|{y}"
+def _judge_input_hash(run: dict) -> str:
+    """Fingerprint the actual blind inputs, including re-evaluated automated checks."""
+    inputs = [_context(run), _sheet(run), list(criteria(run))]
+    return hashlib.sha256(json.dumps(inputs, ensure_ascii=False).encode("utf-8")).hexdigest()
+
+
+def _is_sha256(value) -> bool:
+    return (isinstance(value, str) and len(value) == 64
+            and all(c in "0123456789abcdef" for c in value))
+
+
+def _ckey(judge: str, a: str, b: str, a_hash: str, b_hash: str) -> tuple:
+    x, y = sorted(((a, a_hash), (b, b_hash)))
+    return judge, JUDGE_VERSION, x, y

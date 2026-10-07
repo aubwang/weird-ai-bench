@@ -155,7 +155,7 @@ def test_slack_widens_the_count_and_shows_in_prompts_and_errors():
     longer = LineSpec(4, slack=[0, 2])
     assert analyze_line("We walk back home now", longer).syllables_ok  # 5
     assert not analyze_line("We walk", longer).syllables_ok  # 2
-    assert "4 syllables (4 to 6 fits)" in describe_line(longer, 1, {})
+    assert "4 syllables (legacy count range 4 to 6)" in describe_line(longer, 1, {})
     sec = SectionSpec("line", "Line", [loose], {}, singer=1)
     assert "it needs 5 to 9." in verify_section(["We walk back home tonight together, my friend"], sec).errors()[0]
-    assert "7 syllables (5 to 9 fits)" in describe_line(loose, 1, {})
+    assert "7 syllables (legacy count range 5 to 9)" in describe_line(loose, 1, {})
