@@ -7,8 +7,8 @@ import pytest
 
 from weird_ai_bench.cli import main
 from weird_ai_bench.llm import ScriptedClient
-from weird_ai_bench.orchestrate import RunConfig, Song, rescore, save
-from weird_ai_bench.spec import load_spec
+from weird_ai_bench.orchestrate import ConfigError, RunConfig, Song, rescore, save
+from weird_ai_bench.spec import LineSpec, ProsodySetting, load_spec
 from weird_ai_bench.verify import GATES, SCORING_VERSION, verify_section
 
 CHORUS = "<lyrics>We chase the dawn\nWe head for town</lyrics>"
@@ -25,9 +25,51 @@ def strict_run():
 def test_rescore_matches_a_fresh_run():
     r = strict_run()
     again = rescore(r)
-    for key in ("parts", "verification", "scores", "turns", "originality", "scoring_version"):
+    for key in ("parts", "verification", "scores", "turns", "originality", "scoring_version",
+                "generation_scoring_version"):
         assert again[key] == r[key], key
     assert r["scoring_version"] == SCORING_VERSION
+    assert r["generation_scoring_version"] == SCORING_VERSION
+
+
+@pytest.mark.parametrize("old_version", [None, 2, 3])
+def test_rescore_preserves_original_generation_version(old_version):
+    r = strict_run()
+    del r["generation_scoring_version"]
+    if old_version is None:
+        del r["scoring_version"]
+    else:
+        r["scoring_version"] = old_version
+    original = json.dumps(r, sort_keys=True)
+    updated = rescore(r)
+    assert updated["generation_scoring_version"] == (old_version or 1)
+    assert updated["scoring_version"] == SCORING_VERSION
+    assert rescore(updated)["generation_scoring_version"] == (old_version or 1)
+    assert [t["retries"] for t in updated["turns"]] == [t["retries"] for t in r["turns"]]
+    assert json.dumps(r, sort_keys=True) == original
+
+
+def test_failed_run_records_generation_version():
+    song = Song(RunConfig(["a/one", "b/two"]), ScriptedClient([]))
+    result = song.failed_result("synthetic failure")
+    assert result["generation_scoring_version"] == SCORING_VERSION
+    assert rescore(result)["generation_scoring_version"] == SCORING_VERSION
+
+
+@pytest.mark.parametrize("tolerance", [-1, True, 0.5, "1"])
+def test_invalid_tolerance_is_rejected_before_generation(tolerance):
+    with pytest.raises(ConfigError, match="tolerance must be a whole number"):
+        Song(RunConfig(["a/one", "b/two"], tolerance=tolerance), ScriptedClient([]))
+
+
+def test_exact_prosody_rejects_tolerance_before_generation():
+    spec = load_spec("two_voices")
+    spec.sections["opening"].lines[0] = LineSpec(prosody=[
+        ProsodySetting(name="one syllable per note", note_spans=[1, 1, 1, 1])])
+    with pytest.raises(ConfigError, match="Exact prosody settings cannot use --tolerance"):
+        Song(RunConfig(["a/one", "b/two"], tolerance=1), ScriptedClient([]), spec=spec)
+    RunConfig(["a/one", "b/two"], tolerance=0).validate(spec)
+    RunConfig(["a/one", "b/two"], tolerance=1).validate(load_spec("two_voices"))
 
 
 def test_rescore_reparses_raw_responses():

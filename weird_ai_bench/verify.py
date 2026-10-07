@@ -9,10 +9,11 @@ from .phonetics import VOWELS, Pron, Token, WordInfo, strip_adlibs, tokenize
 from .spec import InternalRhymeSpec, LineSpec, SectionSpec, describe_internal_rhyme, slack_bounds
 
 GATES = ("structure", "syllables", "stress", "split", "rhyme", "internal_rhyme", "originality")
+METER_GATES = ("syllables", "stress", "split")
 
 # Bump when a rule change can move a saved run's scores; `weird-ai-bench rescore`
 # brings old runs up to date. Runs saved without a version count as 1.
-SCORING_VERSION = 3
+SCORING_VERSION = 4
 
 # Unstressed words that lean on the word before them at a line end, so the pair
 # rhymes as one: "show me" / "lonely".
@@ -62,23 +63,73 @@ class LineReport:
     copied: bool | None = None  # None: not checked against the original lyrics
     copied_words: list[str] = field(default_factory=list)
     guessed_words: list[str] = field(default_factory=list)
+    prosody_mode: str = "legacy_count"
+    allowed_counts: list[int] = field(default_factory=list)
+    setting_name: str | None = None  # setting evaluated; not necessarily a pass
+    note_spans: list[int] = field(default_factory=list)
+    # Feasible JOINT outcomes, not independent permissions to mix readings.
+    # At most eight distinct masks, independent of the number of readings.
+    meter_options: list[dict[str, bool]] = field(default_factory=list)
 
     @property
     def stress_ok(self) -> bool:
         return self.stress_hits == self.stress_required
 
+    def meter_passed(self, gates) -> bool:
+        selected = [g for g in gates if g in METER_GATES]
+        options = self.meter_options or [{"syllables": self.syllables_ok,
+                                          "stress": self.stress_ok,
+                                          "split": self.split_ok is not False}]
+        return any(all(option[g] for g in selected) for option in options)
+
 
 def analyze_line(text: str, spec: LineSpec, overrides: dict | None = None,
                  tolerance: int = 0, index: int = 1) -> LineReport:
+    if type(tolerance) is not int or tolerance < 0:
+        raise ValueError("tolerance must be a whole number 0 or more")
     toks = tokenize(text, overrides)
+    if spec.prosody:
+        if tolerance:
+            raise ValueError("exact prosody settings cannot use --tolerance")
+        reports = []
+        for setting in spec.prosody:
+            meter = LineSpec(setting.syllables, setting.stress, setting.split)
+            rep = _analyze_meter(text, toks, meter, 0, index)
+            rep.prosody_mode = "explicit_settings"
+            rep.allowed_counts = sorted({p.syllables for p in spec.prosody})
+            rep.setting_name = setting.name
+            rep.note_spans = list(setting.note_spans)
+            reports.append(rep)
+        # Never combine a count from one setting with stress/split from another.
+        chosen = min(reports, key=lambda r: (
+            not r.syllables_ok,
+            r.stress_required - r.stress_hits + (r.split_ok is False),
+            abs(r.count - r.target),
+        ))
+        options = [option for report in reports for option in report.meter_options]
+        chosen.meter_options = []
+        for option in options:
+            if option not in chosen.meter_options:
+                chosen.meter_options.append(option)
+        return chosen
+    return _analyze_meter(text, toks, spec, tolerance, index)
+
+
+def _analyze_meter(text: str, toks: list[Token], spec: LineSpec,
+                   tolerance: int, index: int) -> LineReport:
     rep = LineReport(index=index, text=text, target=spec.syllables)
     rep.guessed_words = [t.info.text for t in toks if t.info.guessed]
+    fewer, more = slack_bounds(spec)
+    rep.under, rep.over = max(tolerance, fewer), max(tolerance, more)
+    required = set(spec.stress)
+    rep.stress_required = len(required)
     if not toks:
         rep.count = rep.count_min = rep.count_max = 0
-        rep.stress_required = len(spec.stress)
+        rep.split_ok = False if spec.split else None
+        rep.meter_options = [{"syllables": False, "stress": not required,
+                              "split": spec.split is None}]
         return rep
 
-    required = set(spec.stress)
     split_at = spec.split[0] if spec.split else None
 
     # DP over words: state (syllable position, split satisfied) -> best
@@ -106,28 +157,39 @@ def analyze_line(text: str, spec: LineSpec, overrides: dict | None = None,
 
     positions = sorted({pos for pos, _ in states})
     rep.count_min, rep.count_max = positions[0], positions[-1]
+    for (pos, hit), (viol, _) in states.items():
+        count_ok = -rep.under <= pos - spec.syllables <= rep.over
+        option = {"syllables": count_ok,
+                  "stress": not required or (count_ok and not viol and max(required) <= pos),
+                  "split": split_at is None or (count_ok and hit)}
+        if option not in rep.meter_options:
+            rep.meter_options.append(option)
 
     def rank(item):
         (pos, hit), (viol, _) = item
-        return (abs(pos - spec.syllables), 0 if (hit or split_at is None) else 1, viol)
+        count_ok = -rep.under <= pos - spec.syllables <= rep.over
+        missing = sum(b > pos for b in required)
+        # An accepted pronunciation satisfying all constraints beats a nearer
+        # count which violates stress or the phrase boundary.
+        return (not count_ok, viol + missing + (split_at is not None and not hit),
+                abs(pos - spec.syllables)) if count_ok else (True, abs(pos - spec.syllables), viol)
 
     (pos, hit), (viol, path) = min(states.items(), key=rank)
     rep.count = pos
-    fewer, more = slack_bounds(spec)
-    rep.under, rep.over = max(tolerance, fewer), max(tolerance, more)
     rep.syllables_ok = -rep.under <= pos - spec.syllables <= rep.over
     if split_at is not None:
         rep.split_ok = hit and rep.syllables_ok
-    rep.stress_required = len(required)
     if rep.syllables_ok or not required:
-        rep.stress_hits = len(required) - viol
+        missing = sorted(b for b in required if b > pos)
+        rep.stress_hits = len(required) - viol - len(missing)
+        rep.stress_issues.extend(f"syllable {b} is missing" for b in missing)
         for ti, pron, beats in path:
             info = toks[ti].info
             for b in beats:
                 if info.weak:
-                    rep.stress_issues.append(f"beat {b} lands on '{info.text}', a weak word")
+                    rep.stress_issues.append(f"syllable {b} lands on '{info.text}', a weak word")
                 else:
-                    rep.stress_issues.append(f"beat {b} lands on an unstressed syllable of '{info.text}'")
+                    rep.stress_issues.append(f"syllable {b} lands on an unstressed syllable of '{info.text}'")
     else:
         rep.stress_hits = 0  # meaningless when the count is off
     return rep
@@ -358,12 +420,8 @@ class SectionReport:
     def gate(self, name: str) -> bool:
         if name == "structure":
             return not self.structure_errors
-        if name == "syllables":
-            return all(l.syllables_ok for l in self.lines)
-        if name == "stress":
-            return all(l.stress_ok for l in self.lines)
-        if name == "split":
-            return all(l.split_ok is not False for l in self.lines)
+        if name in METER_GATES:
+            return all(l.meter_passed([name]) for l in self.lines)
         if name == "rhyme":
             return all(l.rhyme_ok is not False for l in self.lines)
         if name == "internal_rhyme":
@@ -373,7 +431,8 @@ class SectionReport:
         raise ValueError(name)
 
     def passed(self, gates=GATES) -> bool:
-        return all(self.gate(g) for g in gates)
+        return (all(l.meter_passed(gates) for l in self.lines) and
+                all(self.gate(g) for g in gates if g not in METER_GATES))
 
     def errors(self, gates=GATES) -> list[str]:
         out = []
@@ -381,13 +440,21 @@ class SectionReport:
             out += self.structure_errors
         for l in self.lines:
             n = f"Line {l.index}"
-            if "syllables" in gates and not l.syllables_ok:
-                need = (f"{max(l.target - l.under, 1)} to {l.target + l.over}"
+            meter_passed = l.meter_passed(gates)
+            if "syllables" in gates and not l.meter_passed(["syllables"]):
+                need = (" or ".join(map(str, l.allowed_counts)) if l.allowed_counts else
+                        f"{max(l.target - l.under, 1)} to {l.target + l.over}"
                         if l.under or l.over else str(l.target))
                 out.append(f"{n} (\"{l.text}\") has {l.count} syllables; it needs {need}.")
-            if "stress" in gates and l.syllables_ok and not l.stress_ok:
+            if not meter_passed and l.syllables_ok:
+                if l.setting_name is not None:
+                    out.append(f"{n}: no single declared prosody setting and pronunciation satisfies "
+                               f"the selected meter checks; details below use setting '{l.setting_name}'.")
+                elif all(l.meter_passed([g]) for g in gates if g in METER_GATES):
+                    out.append(f"{n}: no single pronunciation satisfies the selected meter checks together.")
+            if not meter_passed and "stress" in gates and l.syllables_ok and not l.stress_ok:
                 out.append(f"{n} (\"{l.text}\"): " + "; ".join(l.stress_issues) + ".")
-            if "split" in gates and l.split_ok is False and l.syllables_ok:
+            if not meter_passed and "split" in gates and l.split_ok is False and l.syllables_ok:
                 out.append(f"{n} (\"{l.text}\") needs a pause (comma or dash) exactly at the split point.")
             if "internal_rhyme" in gates and l.internal_ok is False:
                 need = l.internal_requirement or "an internal rhyme between two of its words"
@@ -429,6 +496,7 @@ class SectionReport:
         d = asdict(self)
         d["scores"] = self.scores()
         d["gates"] = {g: self.gate(g) for g in GATES}
+        d["meter_joint_pass"] = all(l.meter_passed(METER_GATES) for l in self.lines)
         return d
 
 

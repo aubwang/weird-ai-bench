@@ -15,6 +15,8 @@ As a Python CLI this project allows you to: define songs and scenarios, assign m
 - [How it works](#how-it-works)
 - [Run it yourself](#run-it-yourself)
 
+Want to hear a favorite result? [Export a selected song for local YingMusic-Singer-Plus production](docs/song-export.md). This optional step prepares private inputs without changing scores or loading a singing model.
+
 ## What parody writing tests
 
 Writing a good song parody at times feels like a literary constrained optimization problem. First, a replacement line must fit the melody, it must respect the meter, rhyme, and structure of the line, and lastly it needs to match the theme of the song, narratively progress the verse, and be funny. Additionally, humans can intrinsically "feel out" syllable placement and stresses by listening to the song, while text LLMs must derive these from raw lyrics. Later, when we look at some example lines, you'll see how hard it is to "hear out" the lines to a song without reference audio.
@@ -214,7 +216,7 @@ Runs are grouped by their content and settings so different tasks are not silent
 
 ### Make your own base song template
 
-Start from [`two_voices.yaml`](weird_ai_bench/data/specs/two_voices.yaml) as an example and the [authoring guide](docs/authoring.md). `weird-ai-bench spec --spec your-song.yaml` prints the song map and suggests where a line needs syllable slack.
+Start from [`two_voices.yaml`](weird_ai_bench/data/specs/two_voices.yaml) as an example and the [authoring guide](docs/authoring.md). `weird-ai-bench spec --spec your-song.yaml` prints the song map and flags differing counts for manual review. For verified melodic alternatives, the [authoring guide](docs/authoring.md#explicit-prosody-settings-and-melisma) describes exact syllable-to-note settings, including melisma, with setting-specific stress and phrasing. Count tolerance alone does not establish melody fit.
 
 ## Run it yourself
 

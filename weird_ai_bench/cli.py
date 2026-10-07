@@ -63,7 +63,8 @@ def _common(p: argparse.ArgumentParser, single: bool = True) -> None:
     p.add_argument("--preset", action="append", default=[],
                    help="prewritten sections YAML file or bundled ID; repeat for multiple presets")
     p.add_argument("--retries", type=int, default=3, help="strict track: retries per part")
-    p.add_argument("--tolerance", type=int, default=0, help="allowed syllable miss per line")
+    p.add_argument("--tolerance", type=int, default=0,
+                   help="legacy count tolerance; must be 0 with explicit prosody settings")
     p.add_argument("--gates", default=",".join(GATES),
                    help=f"strict track: checks that must pass (default: all of {','.join(GATES)})")
     p.add_argument("--spec", default="two_voices", help="bundled spec id or a YAML path")
@@ -241,6 +242,12 @@ def cmd_matrix(args) -> int:
 
 def cmd_check(args) -> int:
     spec = load_spec(args.spec)
+    if args.tolerance < 0:
+        _log("error: tolerance must be a whole number 0 or more")
+        return 2
+    if args.tolerance and any(line.prosody for sec in spec.sections.values() for line in sec.lines):
+        _log("error: exact prosody settings cannot use --tolerance; use --tolerance 0")
+        return 2
     text = Path(args.file).read_text() if args.file != "-" else sys.stdin.read()
     sections: dict[str, list[str]] = {}
     current = args.section
@@ -271,6 +278,9 @@ def cmd_check(args) -> int:
             fits = f" ({max(l.target - l.under, 1)}-{l.target + l.over})" if l.under or l.over else ""
             marks = [f"{l.count}/{l.target}{fits} syl"
                      + ("" if l.syllables_ok else " ✗")]
+            if l.setting_name is not None:
+                marks.append(f"setting: {l.setting_name}; notes per syllable: {l.note_spans}")
+                marks.append("allowed counts: " + " or ".join(map(str, l.allowed_counts)))
             if l.stress_required and not l.syllables_ok:
                 marks.append("stress n/a")
             elif l.stress_required:
@@ -307,6 +317,18 @@ def cmd_judge(args) -> int:
               "  ".join(f"{k} {v}" for k, v in s.items() if k != "overall"))
         if "warning" in r["judge"]:
             _log("warning: " + r["judge"]["warning"])
+    return 0
+
+
+def cmd_export_song(args) -> int:
+    from .export_song import export_song
+    try:
+        manifest = export_song(args.run, args.audio_map, args.out)
+    except (ValueError, OSError) as e:
+        _log(f"error: {e}")
+        return 2
+    print(f"Prepared private render inputs: {manifest}")
+    print("Scores unchanged. Audio has not been rendered; backing tracks are not mixed.")
     return 0
 
 
@@ -476,6 +498,12 @@ def main(argv=None) -> int:
     p.add_argument("--judge", required=True)
     p.add_argument("--max-tokens", type=int, default=DEFAULT_MAX_TOKENS)
     p.set_defaults(func=cmd_judge)
+
+    p = sub.add_parser("export-song", help="prepare private Ying inputs for a selected run (no rendering)")
+    p.add_argument("run", help="one saved run JSON, selected explicitly")
+    p.add_argument("--audio-map", required=True, help="local clip/transcript YAML; see docs/song-export.md")
+    p.add_argument("--out", required=True, help="new private output directory, preferably under runs/")
+    p.set_defaults(func=cmd_export_song)
 
     p = sub.add_parser("rescore", help="re-check saved runs under the current rules (no model calls)")
     p.add_argument("paths", nargs="+", help="run files or directories")
