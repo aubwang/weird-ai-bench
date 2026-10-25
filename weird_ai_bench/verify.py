@@ -46,6 +46,7 @@ class LineReport:
     count: int | None = None
     count_min: int | None = None
     count_max: int | None = None
+    exact_syllables_ok: bool = False  # any pronunciation hits an authored count without slack
     syllables_ok: bool = False
     under: int = 0  # syllables under the target that still pass
     over: int = 0  # syllables over the target that still pass
@@ -110,6 +111,7 @@ def analyze_line(text: str, spec: LineSpec, overrides: dict | None = None,
             abs(r.count - r.target),
         ))
         options = [option for report in reports for option in report.meter_options]
+        chosen.exact_syllables_ok = any(r.exact_syllables_ok for r in reports)
         chosen.meter_options = []
         for option in options:
             if option not in chosen.meter_options:
@@ -160,6 +162,7 @@ def _analyze_meter(text: str, toks: list[Token], spec: LineSpec,
 
     positions = sorted({pos for pos, _ in states})
     rep.count_min, rep.count_max = positions[0], positions[-1]
+    rep.exact_syllables_ok = spec.syllables in positions
     for (pos, hit), (viol, _) in states.items():
         count_ok = -rep.under <= pos - spec.syllables <= rep.over
         option = {"syllables": count_ok,
