@@ -13,6 +13,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .llm import display_name
+from .metrics import section_metrics, summarize_metrics
 from .prompts import (
     trade_line_task, chorus_task, label, parse_lyrics, render_song_so_far,
     retry_message, section_task, system_prompt,
@@ -185,6 +186,7 @@ def score_song(spec: SongSpec, tolerance: int, models: list[str], written: dict[
     singers = range(1, len(models) + 1)
     verification = {}
     line_scores: dict[int, list[float]] = {s: [] for s in singers}
+    diagnostics = {s: [] for s in singers}
     for key in spec.generation_order:
         sec = spec.sections[key]
         author = authors.get(key)
@@ -193,17 +195,21 @@ def score_song(spec: SongSpec, tolerance: int, models: list[str], written: dict[
                              hook_given=given)
         verification[key] = rep.to_dict()
         per_line = [line_score(l) for l in rep.lines] + [0.0] * (len(sec.lines) - len(rep.lines))
+        per_line_metrics = section_metrics(rep, sec)
         if isinstance(author, list):
-            for s, sc in zip(author, per_line):
+            for s, sc, metrics in zip(author, per_line, per_line_metrics):
                 line_scores[s].append(sc)
+                diagnostics[s].append(metrics)
         elif author in line_scores:
             line_scores[author].extend(per_line)
+            diagnostics[author].extend(per_line_metrics)
 
     by_singer = {}
     for s in singers:
         ts = [t for t in turns if t["singer"] == s]
         by_singer[str(s)] = {
             "model": models[s - 1],
+            "metrics": summarize_metrics(diagnostics[s]),
             "adherence": (sum(line_scores[s]) / len(line_scores[s])) if line_scores[s] else None,
             "turns": len(ts),
             "first_try_pass_rate": (sum(t["first_try_pass"] for t in ts) / len(ts)) if ts else None,
