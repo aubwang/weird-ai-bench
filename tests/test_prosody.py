@@ -1,4 +1,4 @@
-"""Exact, authored text-to-note settings; synthetic lyrics only."""
+"""Prosody settings; synthetic lyrics only."""
 
 from dataclasses import asdict
 
@@ -66,7 +66,7 @@ def test_constraints_cannot_be_borrowed_across_settings():
     sec = SectionSpec("verse", "Verse", [line], {}, singer=1)
     rep = verify_section(["The sky, is bright"], sec)
     assert not rep.passed()
-    assert "no single declared prosody setting" in " ".join(rep.errors())
+    assert "doesn't fit any one setting" in " ".join(rep.errors())
 
 
 def fake_token(stresses, break_after=False):
@@ -80,7 +80,7 @@ def test_one_pronunciation_must_supply_all_stresses(monkeypatch):
     assert rep.syllables_ok and rep.stress_hits == 1 and not rep.stress_ok
 
 
-def test_joint_constraints_beat_nearest_legacy_count(monkeypatch):
+def test_joint_constraints_beat_nearest_count(monkeypatch):
     monkeypatch.setattr("weird_ai_bench.verify.tokenize", lambda *_: [fake_token([(0, 1), (1, 0, 0)])])
     rep = analyze_line("example", LineSpec(2, [1], slack=[0, 1]))
     assert rep.count == 3 and rep.syllables_ok and rep.stress_ok
@@ -103,7 +103,7 @@ def test_a_missing_stressed_syllable_never_earns_credit(kwargs):
     assert not rep.stress_ok and "syllable 2 is missing" in rep.stress_issues
 
 
-def test_legacy_snapshot_still_loads_without_new_fields():
+def test_old_snapshot_loads_without_prosody():
     raw = asdict(load_spec("two_voices"))
     for section in raw["sections"].values():
         for line in section["lines"]:
@@ -147,7 +147,7 @@ def test_ambiguous_or_inconsistent_line_settings_are_rejected(mutation):
 
 
 @pytest.mark.parametrize("count", [0, -1, True, 1.5, "4"])
-def test_invalid_legacy_counts_are_rejected(count):
+def test_invalid_counts_are_rejected(count):
     with pytest.raises(ValueError, match="syllables"):
         LineSpec(count)
 
@@ -159,13 +159,12 @@ def test_explicit_setting_round_trip_retry_and_judge_context(tmp_path, capsys):
     result = Song(RunConfig(["a/one"], scenario="none"), client, spec=spec).run()
     assert result["scores"]["strict_pass"] and result["turns"][0]["retries"] == 1
     assert "it needs 2 or 4" in client.calls[1]["messages"][-1]["content"]
-    assert "one complete declared prosody setting" in client.calls[0]["messages"][-1]["content"]
-    assert "melisma" in client.calls[0]["messages"][0]["content"]
+    assert "one of these settings" in client.calls[0]["messages"][-1]["content"]
+    assert "several settings" in client.calls[0]["messages"][0]["content"]
     assert rescore(result)["verification"] == result["verification"]
-    assert "two-held-syllables" in check_notes(result)
-    assert "not observations of a performance" in _context(result)
+    assert "any one of them fits" in _context(result)
     assert "notes per syllable [2, 2]" in _context(result)
-    assert "OR" in describe_line(spec.sections["verse"].lines[0], 1, {})
+    assert " or (" in describe_line(spec.sections["verse"].lines[0], 1, {})
 
     import yaml
     path = tmp_path / "held.yaml"
@@ -189,9 +188,9 @@ def test_judge_sees_stress_phrase_and_pronunciation_uncertainty():
                   ScriptedClient(["<lyrics>The cat and the</lyrics>"]), spec=spec).run()
     notes = check_notes(result)
     assert "unstressed" in notes or "weak word" in notes
-    assert "required phrase boundary" in notes
+    assert "missing its pause" in notes
     result["verification"]["verse"]["lines"][0]["guessed_words"] = ["inventedword"]
-    assert "estimated pronunciations: inventedword" in check_notes(result)
+    assert "guessed pronunciations: inventedword" in check_notes(result)
 
 
 def test_disabled_gate_cannot_trigger_retry_through_setting_selection():
@@ -245,3 +244,14 @@ def test_synthetic_melisma_example_and_tolerance_cli(capsys):
     assert "cannot use --tolerance" in capsys.readouterr().err
     assert main([*args, "--tolerance", "-1"]) == 2
     assert "whole number 0 or more" in capsys.readouterr().err
+
+
+def test_songs_without_settings_keep_their_prompts():
+    client = ScriptedClient()
+    Song(RunConfig(["a/one", "b/two"], scenario="none", track="freeform"), client).run()
+    system = client.calls[0]["messages"][0]["content"]
+    assert "Count syllables as they're sung. Spell out numbers as words.\n" in system
+    assert "settings" not in system
+    result = Song(RunConfig(["a/one", "b/two"], scenario="none", track="freeform"),
+                  ScriptedClient()).run()
+    assert "settings" not in _context(result)

@@ -66,7 +66,7 @@ def test_exact_prosody_rejects_tolerance_before_generation():
     spec = load_spec("two_voices")
     spec.sections["opening"].lines[0] = LineSpec(prosody=[
         ProsodySetting(name="one syllable per note", note_spans=[1, 1, 1, 1])])
-    with pytest.raises(ConfigError, match="Exact prosody settings cannot use --tolerance"):
+    with pytest.raises(ConfigError, match="prosody settings cannot use --tolerance"):
         Song(RunConfig(["a/one", "b/two"], tolerance=1), ScriptedClient([]), spec=spec)
     RunConfig(["a/one", "b/two"], tolerance=0).validate(spec)
     RunConfig(["a/one", "b/two"], tolerance=1).validate(load_spec("two_voices"))
@@ -94,12 +94,14 @@ def test_rescore_against_a_revised_template(tmp_path):
         rescore(r, spec)
 
 
-def test_stats_refuses_mixed_versions_until_rescored(tmp_path, capsys):
+def test_stats_and_leaderboard_refuse_mixed_versions_until_rescored(tmp_path, capsys):
     old, new = strict_run(), strict_run()
     del old["scoring_version"]
     save(old, tmp_path)
     save(dict(new, id=new["id"] + "-b"), tmp_path)
     assert main(["stats", str(tmp_path)]) == 2
+    assert "different rules" in capsys.readouterr().err
+    assert main(["leaderboard", str(tmp_path), "--judge", "x/judge"]) == 2
     assert "different rules" in capsys.readouterr().err
     assert main(["rescore", str(tmp_path)]) == 0
     assert all(json.loads(p.read_text())["scoring_version"] == SCORING_VERSION

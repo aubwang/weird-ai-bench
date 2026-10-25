@@ -63,12 +63,11 @@ class LineReport:
     copied: bool | None = None  # None: not checked against the original lyrics
     copied_words: list[str] = field(default_factory=list)
     guessed_words: list[str] = field(default_factory=list)
-    prosody_mode: str = "legacy_count"
     allowed_counts: list[int] = field(default_factory=list)
-    setting_name: str | None = None  # setting evaluated; not necessarily a pass
+    setting_name: str | None = None  # the closest setting, which may still fail
     note_spans: list[int] = field(default_factory=list)
-    # Feasible JOINT outcomes, not independent permissions to mix readings.
-    # At most eight distinct masks, independent of the number of readings.
+    # Which meter checks each possible reading passes, one entry per distinct outcome.
+    # A gate set passes only if one reading passes all of it.
     meter_options: list[dict[str, bool]] = field(default_factory=list)
 
     @property
@@ -90,17 +89,16 @@ def analyze_line(text: str, spec: LineSpec, overrides: dict | None = None,
     toks = tokenize(text, overrides)
     if spec.prosody:
         if tolerance:
-            raise ValueError("exact prosody settings cannot use --tolerance")
+            raise ValueError("prosody settings cannot use --tolerance")
         reports = []
         for setting in spec.prosody:
             meter = LineSpec(setting.syllables, setting.stress, setting.split)
             rep = _analyze_meter(text, toks, meter, 0, index)
-            rep.prosody_mode = "explicit_settings"
             rep.allowed_counts = sorted({p.syllables for p in spec.prosody})
             rep.setting_name = setting.name
             rep.note_spans = list(setting.note_spans)
             reports.append(rep)
-        # Never combine a count from one setting with stress/split from another.
+        # Report the closest setting; never mix one setting's count with another's stress.
         chosen = min(reports, key=lambda r: (
             not r.syllables_ok,
             r.stress_required - r.stress_hits + (r.split_ok is False),
@@ -168,11 +166,11 @@ def _analyze_meter(text: str, toks: list[Token], spec: LineSpec,
     def rank(item):
         (pos, hit), (viol, _) = item
         count_ok = -rep.under <= pos - spec.syllables <= rep.over
+        if not count_ok:
+            return (True, abs(pos - spec.syllables), viol)
+        # Within the allowed counts, fewest stress and pause misses wins over nearest count.
         missing = sum(b > pos for b in required)
-        # An accepted pronunciation satisfying all constraints beats a nearer
-        # count which violates stress or the phrase boundary.
-        return (not count_ok, viol + missing + (split_at is not None and not hit),
-                abs(pos - spec.syllables)) if count_ok else (True, abs(pos - spec.syllables), viol)
+        return (False, viol + missing + (split_at is not None and not hit), abs(pos - spec.syllables))
 
     (pos, hit), (viol, path) = min(states.items(), key=rank)
     rep.count = pos
@@ -448,10 +446,11 @@ class SectionReport:
                 out.append(f"{n} (\"{l.text}\") has {l.count} syllables; it needs {need}.")
             if not meter_passed and l.syllables_ok:
                 if l.setting_name is not None:
-                    out.append(f"{n}: no single declared prosody setting and pronunciation satisfies "
-                               f"the selected meter checks; details below use setting '{l.setting_name}'.")
+                    out.append(f"{n} (\"{l.text}\") doesn't fit any one setting; the closest is "
+                               f"'{l.setting_name}'.")
                 elif all(l.meter_passed([g]) for g in gates if g in METER_GATES):
-                    out.append(f"{n}: no single pronunciation satisfies the selected meter checks together.")
+                    out.append(f"{n} (\"{l.text}\") can't pass its count, stress, and pause checks "
+                               f"with one pronunciation.")
             if not meter_passed and "stress" in gates and l.syllables_ok and not l.stress_ok:
                 out.append(f"{n} (\"{l.text}\"): " + "; ".join(l.stress_issues) + ".")
             if not meter_passed and "split" in gates and l.split_ok is False and l.syllables_ok:

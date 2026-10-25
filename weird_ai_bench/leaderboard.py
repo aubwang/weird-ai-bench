@@ -12,7 +12,7 @@ from collections import defaultdict
 from dataclasses import asdict
 from pathlib import Path
 
-from .judge import JUDGE_VERSION, _context, _sheet, criteria, pairwise
+from .judge import JUDGE_VERSION, judge_inputs, pairwise
 from .llm import family
 from .spec import result_spec
 from .verify import GATES
@@ -50,7 +50,7 @@ def group_key(run: dict) -> tuple:
     retries = c.get("max_retries", 3) if strict else None
     gates = tuple(sorted(c.get("gates") or GATES)) if strict else None
     evaluation_version = run.get("scoring_version", 1)
-    # Rescoring does not change which rules shaped a strict run's retry feedback.
+    # Retry feedback followed the rules a strict run was written under, whatever it's rescored with.
     generation_version = run.get("generation_scoring_version", evaluation_version) if strict else None
     return (template, scenario, c["names"], c["chorus"], c["track"], c.get("guidance", "full"),
             reference, supplied, c.get("tolerance", 0), retries, gates,
@@ -326,8 +326,7 @@ def leaderboard(runs: list[dict], client, judge_model: str | list[str], cache_pa
                 c = json.loads(line)
             except json.JSONDecodeError:
                 continue
-            # Legacy rows cannot establish which lyrics/checks were judged. Leave them
-            # on disk, but never infer their inputs from today's possibly rescored runs.
+            # Older rows have no input hashes, so there's no telling what they judged.
             if (isinstance(c, dict) and c.get("judge_version") == JUDGE_VERSION
                     and all(isinstance(c.get(k), str) for k in ("judge", "a", "b"))
                     and all(_is_sha256(c.get(k)) for k in ("a_input_sha256", "b_input_sha256"))):
@@ -485,9 +484,8 @@ def _bootstrap(runs, groups, comparisons, pair_idx, strengths, reps, seed, prior
 
 
 def _judge_input_hash(run: dict) -> str:
-    """Fingerprint the actual blind inputs, including re-evaluated automated checks."""
-    inputs = [_context(run), _sheet(run), list(criteria(run))]
-    return hashlib.sha256(json.dumps(inputs, ensure_ascii=False).encode("utf-8")).hexdigest()
+    """A hash of what the judge sees, so rescoring a run or editing a prompt misses the cache."""
+    return hashlib.sha256(json.dumps(judge_inputs(run), ensure_ascii=False).encode()).hexdigest()
 
 
 def _is_sha256(value) -> bool:
