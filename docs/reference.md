@@ -135,7 +135,7 @@ cannot be reconstructed from that value alone.
 
 `leaderboard` compares songs written under the same settings, two at a time. Settings include the template, scenario text, reference lyrics, supplied sections, names, chorus, track, guidance, tolerance, temperature, effort, and on the strict track the gates and retries. Pairs are picked so every song is compared about equally often, up to `--max-pairs`, chosen without regard to which pairs are cached or failed. Each pair is judged twice with the order swapped, and a disagreement counts as a tie, which cancels position bias; the output reports how often that happened. A song that failed mid-run loses to every finished song without a judge call.
 
-Results are fitted with a weighted additive Bradley-Terry model: a song's strength is the sum of its singers' model strengths, each weighted by that singer's share of the generated lines as performed. That's what lets a benchmark of shared songs rank individual models, and it credits a repeated chorus to whoever wrote it. The fit puts a normal prior on each strength (`--prior-sd`, default 1 logit, about 170 Elo), so a model that wins every game still gets a finite rating. The 95% intervals come from `--bootstrap` resamples of the songs within each group; treat models with overlapping intervals as tied. Win rate counts only the games where a model's share differed between the two songs. Use at least three models or `--include-self`: with two, A×B and B×A have the same singers and differ only in who wrote which part, so the leaderboard warns that its ranking rests on that alone. Judgments are cached in `judgments.jsonl`, keyed by the judge, prompt version, run IDs, and hashes of the actual blind judge inputs (context, rendered lyrics, and check reports). Rescoring or changing those inputs invalidates reuse even when the run IDs stay the same. Legacy cache rows without input hashes remain on disk but are not reused. Judge prompt version 5 exposes stress, phrase-boundary and pronunciation-uncertainty reports and explains explicit settings; older cached judgments are not reused. Rejudging requires model calls, so keep the old results if you do not want new costs (the Python API also supports `cached_only=True`). Next to each model's rating, the table shows its `meter`: the mean automated line adherence over its songs, with unwritten lines counted as 0. It's reported beside the judged ranking, not folded into it.
+Results are fitted with a weighted additive Bradley-Terry model: a song's strength is the sum of its singers' model strengths, each weighted by that singer's share of the generated lines as performed. That's what lets a benchmark of shared songs rank individual models, and it credits a repeated chorus to whoever wrote it. The fit puts a normal prior on each strength (`--prior-sd`, default 1 logit, about 170 Elo), so a model that wins every game still gets a finite rating. The 95% intervals come from `--bootstrap` resamples of the songs within each group; treat models with overlapping intervals as tied. Win rate counts only the games where a model's share differed between the two songs. Use at least three models or `--include-self`: with two, A×B and B×A have the same singers and differ only in who wrote which part, so the leaderboard warns that its ranking rests on that alone. Judgments are cached in `judgments.jsonl`, keyed by the judge, prompt version, run IDs, and hashes of the actual blind judge inputs (context, rendered lyrics, and check reports). Rescoring or changing those inputs invalidates reuse even when the run IDs stay the same. Legacy cache rows without input hashes remain on disk but are not reused. Judge prompt version 5 exposes stress, phrase-boundary and pronunciation-uncertainty reports and explains explicit settings; older cached judgments are not reused. Rejudging requires model calls, so keep the old results if you do not want new costs (the Python API also supports `cached_only=True`). Next to each model's rating, the table shows `adher` (composite adherence), `syll` (count-pass including declared slack/tolerance), and `joint` (one setting/pronunciation satisfies count, stress and phrase checks together). These diagnostics are not folded into the judged ranking. See the metric definitions below.
 
 The judge is blind: it sees "Singer 1", "Singer 2", and so on, never model ids. Model, persona, and family names written into the lyrics ("Claude", "ChatGPT's") are replaced with the matching "Singer N" before judging, or with "a singer" when two singers share a family. The judge also sees the reference lyrics, to judge parody craft, and after each song the automated check results: how many generated lines hit their syllable targets, and which lines missed a count, a rhyme, or copied the original. It's told the checker can mispronounce, so it weighs each miss by how much it would hurt a performance. Assigned character names in the scenario (`--names assigned`) stay visible in the setup, since every song in the group shares them; they're still redacted in the lyrics. Pick a judge from a different family than the singers; weird ai bench warns when it isn't.
 
@@ -236,3 +236,54 @@ Keep song source files under `songs/local/`, prewritten material under
 and generated runs are ignored. Ignoring a file does not remove it from existing
 Git history; check what is staged before publishing. Private material is still
 sent to the configured model endpoint when you explicitly use it in a run.
+
+
+## Component metrics (diagnostics version 1)
+
+New and rescored runs add `scores.by_singer.<singer>.metrics`. Existing scorer
+version 4 rules, retry gates, composite adherence and judged rankings are
+unchanged. The additive diagnostics carry their own `version: 1`.
+
+Each rate contains `passed`, `total` and `rate` (null when nothing is annotated):
+
+- `exact_syllables`: some pronunciation matches an authored count exactly,
+  ignoring legacy slack/tolerance. Explicit melisma alternatives are allowed;
+  this does not require that the exact-count reading also passes stress.
+- `syllables`: count passes the declared settings, including legacy slack/tolerance.
+- `joint_prosody`: a single setting and pronunciation passes count, stress and
+  phrase constraints together, not independent successes combined afterward.
+- `stress` and `phrase`: count plus the named constraint passes under at least
+  one allowed setting. Denominators include only lines with that constraint in
+  any authored setting. An unconstrained alternative can satisfy it; the joint
+  metric still requires one coherent reading for all constraints.
+- `rhyme`: the existing rhyme rule passes, for lines in authored groups of at
+  least two members (excluding hook repeats). A missing rhyme partner does not
+  remove the written member from the denominator. No rhyme weights change.
+
+Per-singer denominators count expected generated line slots, once per generated
+section, not repeated performances. Missing or blank lines fail applicable
+checks. Presets and original supplied sections are excluded. Unannotated
+constraints are null rather than perfect. Extra lines remain structure failures;
+these metrics assess the expected slots, not structural completeness.
+
+`missing`, `copy_checked`, `copied` and `guessed_pronunciation` are counts.
+Copy checking counts only nonblank observed lines actually checked against a
+reference. Missing lines are not verified original. Fit diagnostics are raw:
+a copied line may fit perfectly, but still earns zero composite adherence.
+Estimated pronunciations can pass existing checks, so their count stays visible;
+this is not proof of pronunciation or singability. These synthetic regression
+fixtures are not a substitute for human calibration.
+
+Leaderboard JSON pools component numerators/denominators across singer-runs and
+reports `available_singer_runs` and `missing_singer_runs` per model. Any legacy
+or incompatible diagnostics make that model's component rates null rather than
+silently reporting a partial subset. Rescore preserved copies to populate them;
+no new generation is needed. Composite adherence retains its existing mean of
+singer-run means. Neither statistic is a confidence interval.
+
+For compatibility, leaderboard JSON retains `meter` as a **deprecated alias for
+composite adherence**, adds the correctly named `adherence`, and declares
+`meter_deprecated_alias: "adherence"`. `meter_by_model()` likewise remains a
+legacy alias for `adherence_by_model()`. New clients should use `adherence` or
+`metrics`, not infer syllable accuracy from `meter`. The CLI no longer uses the
+misleading label. Existing published results are not regenerated by this change.
