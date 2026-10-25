@@ -14,6 +14,7 @@ from pathlib import Path
 
 from .judge import JUDGE_VERSION, _context, _sheet, criteria, pairwise
 from .llm import family
+from .metrics import METRICS_VERSION, RATE_METRICS
 from .spec import result_spec
 from .verify import GATES
 
@@ -293,7 +294,7 @@ def panel_for(judges: list[str], a: dict, b: dict) -> tuple[list[str], bool]:
     return (free, False) if free else (judges, True)
 
 
-def meter_by_model(runs: list[dict]) -> dict[str, float]:
+def adherence_by_model(runs: list[dict]) -> dict[str, float]:
     """Each model's mean automated adherence over the runs it sang in; missing lines count as 0."""
     acc: dict[str, list[float]] = defaultdict(list)
     for r in runs:
@@ -301,6 +302,40 @@ def meter_by_model(runs: list[dict]) -> dict[str, float]:
             if b.get("adherence") is not None:
                 acc[b["model"]].append(b["adherence"])
     return {m: _mean(v) for m, v in acc.items()}
+
+
+def meter_by_model(runs: list[dict]) -> dict[str, float]:
+    """Deprecated compatibility alias: this returns composite adherence, NOT meter."""
+    return adherence_by_model(runs)
+
+
+def diagnostics_by_model(runs: list[dict]) -> dict:
+    """Pool counts over expected generated slots; legacy diagnostics stay unavailable."""
+    acc = {}
+    for run in runs:
+        for singer in run["scores"]["by_singer"].values():
+            model = singer["model"]
+            a = acc.setdefault(model, {"available_singer_runs": 0, "missing_singer_runs": 0,
+                                      "expected_lines": 0, "missing": 0, "copy_checked": 0,
+                                      "copied": 0, "guessed_pronunciation": 0,
+                                      **{key: {"passed": 0, "total": 0} for key in RATE_METRICS}})
+            metrics = singer.get("metrics") or {}
+            if metrics.get("version") != METRICS_VERSION:
+                a["missing_singer_runs"] += 1
+                continue
+            a["available_singer_runs"] += 1
+            for key in ("expected_lines", "missing", "copy_checked", "copied", "guessed_pronunciation"):
+                a[key] += metrics[key]
+            for key in RATE_METRICS:
+                for count in ("passed", "total"):
+                    a[key][count] += metrics[key][count]
+    for a in acc.values():
+        for key in RATE_METRICS:
+            counts = a[key]
+            # Never display a partial subset as the whole model's metric.
+            counts["rate"] = (counts["passed"] / counts["total"]
+                              if counts["total"] and not a["missing_singer_runs"] else None)
+    return acc
 
 
 def leaderboard(runs: list[dict], client, judge_model: str | list[str], cache_path: Path,
@@ -447,17 +482,24 @@ def leaderboard(runs: list[dict], client, judge_model: str | list[str], cache_pa
             da, db = round(wa.get(m, 0.0), 6), round(wb.get(m, 0.0), 6)
             if da != db:  # a model on both sides equally is no evidence for or against itself
                 credit[m].append(y if da > db else 1 - y)
-    meter = meter_by_model(runs)
+    adherence = adherence_by_model(runs)
+    diagnostics = diagnostics_by_model(runs)
+    if any(m["missing_singer_runs"] for m in diagnostics.values()):
+        warnings.append("Component metrics unavailable for legacy runs; rescore preserved copies to populate them.")
     table = sorted(
         ({"model": m, "elo": round(to_elo(v)),
           "elo_lo": round(to_elo(bands[m][0])) if m in bands else None,
           "elo_hi": round(to_elo(bands[m][1])) if m in bands else None,
-          "games": len(credit[m]), "win_rate": _mean(credit[m]), "meter": meter.get(m),
+          "games": len(credit[m]), "win_rate": _mean(credit[m]), "adherence": adherence.get(m),
+          "meter": adherence.get(m),  # deprecated JSON alias; never used by the CLI
+          "metrics": diagnostics.get(m),
           "strength": v}
          for m, v in strengths.items()),
         key=lambda r: -r["elo"])
     judged = [c for r in records if r.get("judge") != "forfeit" and (c := _consistent(r)) is not None]
-    return {"judge": judges[0] if len(judges) == 1 else "panel: " + ", ".join(judges),
+    return {"metrics_version": METRICS_VERSION,
+            "meter_deprecated_alias": "adherence",
+            "judge": judges[0] if len(judges) == 1 else "panel: " + ", ".join(judges),
             "judges": judges, "pairs": len(comparisons), "table": table, "records": records,
             "flip_rate": (sum(not c for c in judged) / len(judged)) if judged else None,
             "judge_agreement": agreed / shared if shared else None,
