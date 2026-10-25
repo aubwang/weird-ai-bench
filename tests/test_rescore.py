@@ -117,3 +117,17 @@ def test_reference_lyrics_pass_every_check():
         rep = verify_section([l.reference for l in sec.lines], sec, spec.syllable_overrides, hook=hook)
         assert rep.passed(GATES), (sec.key, rep.errors())
         assert rep.scores()["overall"] == 1, (sec.key, rep.scores())
+
+
+def test_runs_saved_with_dropped_fields_still_render_and_judge(tmp_path, monkeypatch):
+    # Runs saved by the first prosody release carry `prosody_mode`, since removed.
+    run = strict_run()
+    for sec in run["verification"].values():
+        for line in sec["lines"]:
+            line["prosody_mode"] = "legacy_count"
+    path, sheet = save(run, tmp_path)
+    reply = '{"singability": 7, "humor": 6, "parody_craft": 6, "coherence": 7, "interplay": 5}'
+    monkeypatch.setattr("weird_ai_bench.cli.OpenRouterClient",
+                        lambda **_: ScriptedClient([reply]))
+    assert main(["judge", str(path), "--judge", "x/judge"]) == 0
+    assert "## Scores" in sheet.read_text()

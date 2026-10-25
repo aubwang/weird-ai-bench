@@ -556,7 +556,7 @@ def render_sheet(result: dict, spec: SongSpec | None = None, blind: bool = False
         out.append("## Scores\n" + "\n".join(rows))
         issues = []
         for key, v in result["verification"].items():
-            for e in SectionReport(section=key, lines=[LineReport(**l) for l in v["lines"]],
+            for e in SectionReport(section=key, lines=[LineReport.from_dict(l) for l in v["lines"]],
                                    expected_lines=v["expected_lines"],
                                    structure_errors=v["structure_errors"],
                                    rhyme_errors=v["rhyme_errors"]).errors(GATES):

@@ -70,6 +70,11 @@ class LineReport:
     # A gate set passes only if one reading passes all of it.
     meter_options: list[dict[str, bool]] = field(default_factory=list)
 
+    @classmethod
+    def from_dict(cls, d: dict) -> LineReport:
+        """Rebuild a saved report, skipping fields this version no longer has."""
+        return cls(**{k: v for k, v in d.items() if k in cls.__dataclass_fields__})
+
     @property
     def stress_ok(self) -> bool:
         return self.stress_hits == self.stress_required
