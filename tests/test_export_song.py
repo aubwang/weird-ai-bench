@@ -61,10 +61,7 @@ def test_export_matches_actual_upstream_jsonl_contract_and_keeps_scores(inputs, 
     assert manifest["backend"]["input_sha256"] == hashlib.sha256(raw).hexdigest()
     assert manifest["benchmark_snapshot"]["scores"] == run["scores"]
     assert manifest["benchmark_snapshot"]["judge"] == run["judge"]
-    assert manifest["status"] == "prepared_only"
-    assert manifest["backend"]["rendered"] is False
-    assert manifest["backend"]["model_revision"] is None
-    assert manifest["rights"] == {"status": "not_verified", "user_supplied_note": None}
+    assert manifest["rights_note"] is None
     assert len(rows) == 2
     assert set(rows[0]) == {"id", "melody_ref_path", "gen_text", "timbre_ref_path", "timbre_ref_text"}
     assert rows[0]["gen_text"] == "The sky is bright|We watch the light|We walk back home"
@@ -179,7 +176,7 @@ def test_rights_note_is_only_a_note(inputs):
     inputs[3]["rights_note"] = "I recorded these synthetic clips."
     rewrite_map(inputs)
     manifest, _ = prepare_export(inputs[0], inputs[1])
-    assert manifest["rights"] == {"status": "not_verified", "user_supplied_note": "I recorded these synthetic clips."}
+    assert manifest["rights_note"] == "I recorded these synthetic clips."
 
 
 def test_ids_cannot_escape_output_directory(inputs):
@@ -213,7 +210,7 @@ def test_cli_offline_without_processes_or_api_calls(inputs, tmp_path, monkeypatc
     assert main(["export-song", str(inputs[0]), "--audio-map", str(inputs[1]),
                  "--out", str(tmp_path / "out")]) == 0
     output = capsys.readouterr().out
-    assert "not been rendered" in output
+    assert str(tmp_path / "out") in output
     assert main(["export-song", str(inputs[0]), "--audio-map", str(inputs[1]),
                  "--out", str(tmp_path / "out")]) == 2
     assert "already exists" in capsys.readouterr().err

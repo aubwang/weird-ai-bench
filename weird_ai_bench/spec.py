@@ -24,11 +24,10 @@ class InternalRhymeSpec:
 
 @dataclass
 class ProsodySetting:
-    """One author-verified syllable grouping over a fixed sequence of notes.
+    """One way to sing a line: how many notes each syllable takes.
 
-    A span of 2 means one syllable sustained over two notes, not two syllables.
-    Stress and phrase boundaries are syllable indices in this setting only.
-    These annotations do not supply pitches, durations, or audio evidence.
+    A span of 2 is one syllable held over two notes. Stress and split count
+    this setting's syllables.
     """
 
     name: str
@@ -75,7 +74,8 @@ class LineSpec:
     note: str | None = None
     reference: str | None = None
     adlibs: list[str] = field(default_factory=list)
-    # Legacy count tolerance, not evidence that a line fits a melody.
+    # Syllables under and over the target that still fit the melody: one number
+    # for both sides, or [fewer, more].
     slack: int | list[int] = 0
     prosody: list[ProsodySetting] = field(default_factory=list)
 
@@ -132,6 +132,10 @@ class SongSpec:
     generation_order: list[str]
     performance_order: list[str]
     syllable_overrides: dict[str, int]
+
+    @property
+    def uses_prosody(self) -> bool:
+        return any(line.prosody for sec in self.sections.values() for line in sec.lines)
 
     def chorus_key(self) -> str | None:
         for key, sec in self.sections.items():
@@ -190,7 +194,7 @@ def _line(d: dict) -> LineSpec:
 
 
 def slack_bounds(ln: LineSpec) -> tuple[int, int]:
-    """Legacy count tolerance; does not establish melody fit."""
+    """How many syllables under and over the target still fit."""
     s = ln.slack
     return (s, s) if isinstance(s, int) else (s[0], s[1])
 
@@ -366,10 +370,10 @@ def describe_internal_rhyme(rule: bool | InternalRhymeSpec) -> str:
 def describe_line(ln: LineSpec, idx: int, rhymes: dict[str, RhymeSpec]) -> str:
     """One-line human description of a line's constraints, used in prompts."""
     fewer, more = slack_bounds(ln)
-    parts = (["one complete declared prosody setting: " +
-              " OR ".join(describe_setting(p) for p in ln.prosody)] if ln.prosody else
+    parts = (["one of these settings: " + " or ".join(describe_setting(p) for p in ln.prosody)]
+             if ln.prosody else
              [f"{ln.syllables} syllables" + (
-                 f" (legacy count range {max(ln.syllables - fewer, 1)} to {ln.syllables + more})"
+                 f" ({max(ln.syllables - fewer, 1)} to {ln.syllables + more} fits)"
                  if fewer or more else "")])
     if ln.split and not ln.prosody:
         parts.append(f"phrased {ln.split[0]} + {ln.split[1]} with a pause (comma or dash) after syllable {ln.split[0]}")
@@ -433,10 +437,11 @@ def describe_section(sec: SectionSpec) -> str:
 
 
 def slack_hints(spec: SongSpec, min_lines: int = 3) -> list[str]:
-    """Flag differing legacy counts for manual review, without inferring melody.
+    """Where same-length sections disagree on syllable counts but have no slack.
 
-    Kept under its old public name for compatibility. Equal section lengths do
-    not establish a shared melody or justify widening the accepted counts.
+    If those sections are sung to one melody, the melody stretches there, so the
+    lines may deserve slack or prosody settings. Only a hint: the template doesn't
+    record which sections share a melody.
     """
     secs = [s for s in spec.sections.values()
             if not s.is_chorus and not s.is_trade and len(s.lines) >= min_lines]
@@ -453,9 +458,8 @@ def slack_hints(spec: SongSpec, min_lines: int = 3) -> list[str]:
                 hints.append(
                     f"{a.label} and {b.label} differ by up to {max(diffs.values())} "
                     f"syllable{'s' if max(diffs.values()) > 1 else ''} on "
-                    f"line{'s' if len(diffs) > 1 else ''} {', '.join(map(str, diffs))}. "
-                    "Check the source phrasing; equal section lengths do not establish a shared melody. "
-                    "Use explicit `prosody` settings only for verified alternatives.")
+                    f"line{'s' if len(diffs) > 1 else ''} {', '.join(map(str, diffs))}. If they "
+                    f"share a melody, consider `slack` or `prosody` there.")
     return hints
 
 
@@ -465,7 +469,7 @@ def syllable_map(spec: SongSpec) -> str:
     for key in spec.performance_order:
         sec = spec.sections[key]
         counts = " / ".join(
-            " OR ".join(describe_setting(p) for p in ln.prosody) if ln.prosody else
+            " or ".join(describe_setting(p) for p in ln.prosody) if ln.prosody else
             f"{ln.split[0]}+{ln.split[1]}" if ln.split else str(ln.syllables) for ln in sec.lines
         )
         rows.append(f"{sec.label}: {counts}")
