@@ -155,7 +155,9 @@ weird-ai-bench spec --spec two_voices
 weird-ai-bench run --model provider/model-a --model provider/model-b --spec songs/local/my-song.yaml
 ```
 
-Copy `weird_ai_bench/data/specs/two_voices.yaml` as a starting point. It demonstrates
+Copy `weird_ai_bench/data/specs/two_voices.yaml` as a starting point, or draft one from
+a lyrics file with `weird-ai-bench draft lyrics.txt --out songs/local/my-song.yaml`
+(see the [authoring guide](authoring.md#start-from-a-draft)). The example demonstrates
 the unified format: original source text and pacing constraints live on the same
 line entry. For example:
 

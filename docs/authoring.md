@@ -57,6 +57,31 @@ Original reference lines provide context, not required output words. Section
 and speaker tags are built automatically. The same reference is used for the
 originality report. Leave `reference` out if no reference should be supplied.
 
+## Start from a draft
+
+`weird-ai-bench draft` writes a first version of a template from a lyrics file:
+
+```sh
+weird-ai-bench draft lyrics_my-song.txt --out songs/local/my-song.yaml --artist "Someone"
+```
+
+Mark sections with `[Verse 1]`, `[Chorus]`, and so on, or separate them with blank
+lines. A section whose words come back later is sung again rather than copied, and
+the most repeated one becomes the chorus. Trailing `(...)` text becomes ad-libs.
+
+From the words alone, the draft fills in syllable counts, rhyme groups, a `split`
+where a line has one comma or dash, and `hook` and `repeats_hook` when other lines
+end with a chorus line. Lines with the same end word share a `refrain` label.
+Stresses are marked only on the stressed syllable of longer words, where the
+dictionary leaves no doubt. Before writing, it checks the original lyrics against
+the draft and drops anything they'd fail, so the source always passes.
+
+The draft is for one singer. For a duet, raise `singers` and assign the sections.
+`# TODO` comments mark words the dictionary doesn't know or can count two ways.
+Then listen through: a held note, a squeezed syllable, or a stress the melody moves
+needs your edit, and `weird-ai-bench spec --spec songs/local/my-song.yaml` shows
+the result.
+
 ## Meter, rhyme, and optional checks
 
 | Field | Meaning |

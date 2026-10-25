@@ -240,6 +240,14 @@ def _joined(prev: WordInfo, last: WordInfo) -> WordInfo:
                     prons=prons, weak=False, guessed=False)
 
 
+def line_ends(toks: list[Token]) -> list[WordInfo]:
+    """Rhyme candidates: the last word, and with an enclitic, the last two words."""
+    ends = [t.info for t in toks[-1:]]
+    if len(toks) > 1 and toks[-1].info.norm in _ENCLITICS:
+        ends.append(_joined(toks[-2].info, toks[-1].info))
+    return ends
+
+
 def _last_vowel(part: tuple[str, ...]) -> str | None:
     vs = [p for p in part if p in VOWELS]
     return vs[-1] if vs else None
@@ -336,14 +344,14 @@ def rhyme_credit(l: LineReport) -> float | None:
     return 0.1 if l.rhyme_level == "same_sound" else 0.0
 
 
-def _norm_text(s: str) -> str:
+def norm_text(s: str) -> str:
     s = strip_adlibs(s).lower().replace("’", "'")
     return " ".join(re.sub(r"[^\w' ]", " ", s).split())
 
 
 def _reference_index(reference: list[str]) -> tuple[set[str], set[tuple[str, ...]]]:
     """Normalized reference lines, and their word grams (none span a line break)."""
-    lines = [_norm_text(r).split() for r in reference]
+    lines = [norm_text(r).split() for r in reference]
     grams = {tuple(w[i:i + COPY_GRAM]) for w in lines for i in range(len(w) - COPY_GRAM + 1)}
     return {" ".join(w) for w in lines if w}, grams
 
@@ -528,15 +536,15 @@ def verify_section(lines: list[str], sec: SectionSpec, overrides: dict | None = 
             hook_text = lr.text
     for lr, ls in zip(rep.lines, specs):
         if ls.repeats_hook and hook_text:
-            lr.hook_ok = _norm_text(lr.text).endswith(_norm_text(hook_text))
+            lr.hook_ok = norm_text(lr.text).endswith(norm_text(hook_text))
             if not lr.hook_ok:
                 rep.structure_errors.append(
                     f"Line {lr.index} must end with the hook (\"{strip_adlibs(hook_text)}\").")
     if reference is not None:
         index = _reference_index(reference)
-        hook_words = _norm_text(hook_text).split() if hook_text and hook_given else []
+        hook_words = norm_text(hook_text).split() if hook_text and hook_given else []
         for lr, ls in zip(rep.lines, specs):
-            words = _norm_text(lr.text).split()
+            words = norm_text(lr.text).split()
             if ls.repeats_hook and hook_words and words[-len(hook_words):] == hook_words:
                 words = words[:-len(hook_words)]
             lr.copied_words = copied_phrases(words, index)
@@ -547,10 +555,7 @@ def verify_section(lines: list[str], sec: SectionSpec, overrides: dict | None = 
     for lr in rep.lines:
         toks = tokenize(lr.text, overrides)
         words[lr.index] = toks[-1].info if toks else None
-        # Rhyme candidates: the last word, and with an enclitic, the last two words.
-        ends[lr.index] = [t.info for t in toks[-1:]]
-        if len(toks) > 1 and toks[-1].info.norm in _ENCLITICS:
-            ends[lr.index].append(_joined(toks[-2].info, toks[-1].info))
+        ends[lr.index] = line_ends(toks)
     groups: dict[str, list[LineReport]] = {}
     refrain_by_line = {i: ls.refrain for i, ls in enumerate(specs, 1)}
     for lr, ls in zip(rep.lines, specs):
@@ -621,7 +626,7 @@ def verify_section(lines: list[str], sec: SectionSpec, overrides: dict | None = 
 def originality(lines: list[str], original_text: str, n: int = 4) -> dict:
     """Word n-gram overlap between generated lines and the original lyrics."""
     def grams(text: str) -> set[tuple[str, ...]]:
-        w = _norm_text(text).split()
+        w = norm_text(text).split()
         return {tuple(w[i:i + n]) for i in range(len(w) - n + 1)}
 
     orig = grams(original_text)
