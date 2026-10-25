@@ -433,6 +433,31 @@ def cmd_leaderboard(args) -> int:
     return 0
 
 
+def cmd_draft(args) -> int:
+    from .draft import draft
+    path = Path(args.file)
+    title = args.title or path.stem.replace("_", " ").replace("-", " ").title()
+    try:
+        text, spec = draft(path.read_text(encoding="utf-8"), title, args.artist or "", args.id)
+    except (OSError, ValueError) as e:
+        _log(f"error: {e}")
+        return 2
+    if not args.out:
+        print(text, end="")
+        return 0
+    out = Path(args.out)
+    if out.exists() and not args.force:
+        _log(f"error: {out} exists; pass --force to replace it")
+        return 2
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(text, encoding="utf-8")
+    todos = text.count("# TODO:")
+    _log(f"wrote {out}: {len(spec.sections)} sections, "
+         f"{sum(len(s.lines) for s in spec.sections.values())} lines"
+         + (f", {todos} TODOs to check" if todos else ""))
+    return 0
+
+
 def cmd_spec(args) -> int:
     spec = load_spec(args.spec)
     print(f'"{spec.title}" ({spec.artist})\n')
@@ -531,6 +556,16 @@ def main(argv=None) -> int:
     p.add_argument("--seed", type=int)
     p.add_argument("--max-tokens", type=int, default=DEFAULT_MAX_TOKENS)
     p.set_defaults(func=cmd_leaderboard)
+
+    p = sub.add_parser("draft", help="draft a song template from a lyrics file, for you to review")
+    p.add_argument("file", help="lyrics, with [Section] headers or blank lines between sections")
+    p.add_argument("--out", help="YAML path to write, such as songs/local/my-song.yaml; "
+                                 "default: print it")
+    p.add_argument("--title", help="song title (default: from the file name)")
+    p.add_argument("--artist")
+    p.add_argument("--id", help="template id (default: from the title)")
+    p.add_argument("--force", action="store_true", help="replace an existing --out file")
+    p.set_defaults(func=cmd_draft)
 
     p = sub.add_parser("spec", help="show the song map")
     p.add_argument("--spec", default="two_voices")
