@@ -66,7 +66,7 @@ def test_exact_prosody_rejects_tolerance_before_generation():
     spec = load_spec("two_voices")
     spec.sections["opening"].lines[0] = LineSpec(prosody=[
         ProsodySetting(name="one syllable per note", note_spans=[1, 1, 1, 1])])
-    with pytest.raises(ConfigError, match="Exact prosody settings cannot use --tolerance"):
+    with pytest.raises(ConfigError, match="prosody settings cannot use --tolerance"):
         Song(RunConfig(["a/one", "b/two"], tolerance=1), ScriptedClient([]), spec=spec)
     RunConfig(["a/one", "b/two"], tolerance=0).validate(spec)
     RunConfig(["a/one", "b/two"], tolerance=1).validate(load_spec("two_voices"))
@@ -94,12 +94,14 @@ def test_rescore_against_a_revised_template(tmp_path):
         rescore(r, spec)
 
 
-def test_stats_refuses_mixed_versions_until_rescored(tmp_path, capsys):
+def test_stats_and_leaderboard_refuse_mixed_versions_until_rescored(tmp_path, capsys):
     old, new = strict_run(), strict_run()
     del old["scoring_version"]
     save(old, tmp_path)
     save(dict(new, id=new["id"] + "-b"), tmp_path)
     assert main(["stats", str(tmp_path)]) == 2
+    assert "different rules" in capsys.readouterr().err
+    assert main(["leaderboard", str(tmp_path), "--judge", "x/judge"]) == 2
     assert "different rules" in capsys.readouterr().err
     assert main(["rescore", str(tmp_path)]) == 0
     assert all(json.loads(p.read_text())["scoring_version"] == SCORING_VERSION
@@ -115,3 +117,17 @@ def test_reference_lyrics_pass_every_check():
         rep = verify_section([l.reference for l in sec.lines], sec, spec.syllable_overrides, hook=hook)
         assert rep.passed(GATES), (sec.key, rep.errors())
         assert rep.scores()["overall"] == 1, (sec.key, rep.scores())
+
+
+def test_runs_saved_with_dropped_fields_still_render_and_judge(tmp_path, monkeypatch):
+    # Runs saved by the first prosody release carry `prosody_mode`, since removed.
+    run = strict_run()
+    for sec in run["verification"].values():
+        for line in sec["lines"]:
+            line["prosody_mode"] = "legacy_count"
+    path, sheet = save(run, tmp_path)
+    reply = '{"singability": 7, "humor": 6, "parody_craft": 6, "coherence": 7, "interplay": 5}'
+    monkeypatch.setattr("weird_ai_bench.cli.OpenRouterClient",
+                        lambda **_: ScriptedClient([reply]))
+    assert main(["judge", str(path), "--judge", "x/judge"]) == 0
+    assert "## Scores" in sheet.read_text()

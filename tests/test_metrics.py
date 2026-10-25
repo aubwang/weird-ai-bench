@@ -7,31 +7,33 @@ from weird_ai_bench.verify import analyze_line, verify_section
 from tests.test_rescore import strict_run
 
 
-def test_right_count_wrong_stress_is_not_joint_prosody():
+def test_right_count_wrong_stress():
     ls = LineSpec(2, [1])
     m = line_metrics(analyze_line("return", ls), ls)
     assert m["exact_syllables"] and m["syllables"]
-    assert not m["stress"] and not m["joint_prosody"]
+    assert not m["stress"]
     assert m["phrase"] is None
 
 
-def test_melisma_alternatives_and_joint_constraints():
+def test_melisma_alternatives_and_independent_components():
     ls = LineSpec(prosody=[ProsodySetting("held", [2, 2], [1, 2]),
                            ProsodySetting("attacks", [1, 1, 1, 1], [2, 4])])
-    assert line_metrics(analyze_line("Bright light", ls), ls)["joint_prosody"]
     assert line_metrics(analyze_line("Bright light", ls), ls)["exact_syllables"]
     assert not line_metrics(analyze_line("We walk home", ls), ls)["syllables"]
     ls = LineSpec(prosody=[ProsodySetting("pause", [1]*4, [2, 4], [1, 3]),
                            ProsodySetting("stress", [1]*4, [1, 3], [2, 2])])
-    m = line_metrics(analyze_line("The sky, is bright", ls), ls)
-    assert m["stress"] and m["phrase"] and not m["joint_prosody"]
+    report = analyze_line("The sky, is bright", ls)
+    m = line_metrics(report, ls)
+    assert m["stress"] and m["phrase"]
+    # Removing the diagnostic must not change combined scoring gates.
+    assert not report.meter_passed(("syllables", "stress", "split"))
 
 
 def test_slack_is_not_exact_and_missing_stress_fails():
     ls = LineSpec(2, [2], slack=1)
     m = line_metrics(analyze_line("Bright", ls), ls)
     assert m["syllables"] and not m["exact_syllables"]
-    assert not m["stress"] and not m["joint_prosody"]
+    assert not m["stress"]
 
 
 def test_missing_lines_and_rhyme_partner_remain_in_denominators():
@@ -105,7 +107,8 @@ def test_leaderboard_reports_separate_metrics_and_legacy_alias(tmp_path, monkeyp
     for row in out["table"]:
         assert row["adherence"] == row["meter"] == 1
         assert row["metrics"]["syllables"]["rate"] == 1
-        assert row["metrics"]["joint_prosody"]["rate"] == 0
+        assert row["metrics"]["stress"]["rate"] == 0
+        assert "joint_prosody" not in row["metrics"]
         assert row["metrics"]["expected_lines"] == 2
 
 
@@ -122,3 +125,24 @@ def test_exact_count_does_not_depend_on_selected_slack_reading(monkeypatch):
 def test_null_legacy_metrics_are_unavailable():
     run = {"scores": {"by_singer": {"1": {"model": "a/x", "metrics": None}}}}
     assert diagnostics_by_model([run])["a/x"]["syllables"]["rate"] is None
+
+
+def test_metrics_do_not_emit_joint_prosody():
+    ls = LineSpec(2, [1])
+    metrics = line_metrics(analyze_line("Bright light", ls), ls)
+    assert "joint_prosody" not in metrics
+    assert "joint_prosody" not in summarize_metrics([metrics])
+
+
+def test_leaderboard_cli_has_no_joint_column(tmp_path, monkeypatch, capsys):
+    import json
+    from weird_ai_bench.cli import main
+    from tests.test_leaderboard import a_wins, fake_run
+    a_wins(monkeypatch)
+    monkeypatch.setattr("weird_ai_bench.cli.OpenRouterClient", lambda **kwargs: None)
+    for i, model in enumerate(("a/x", "b/y")):
+        (tmp_path / f"run{i}.json").write_text(json.dumps(fake_run(f"r{i}", [model, model])))
+    assert main(["leaderboard", str(tmp_path), "--judge", "j/judge", "--bootstrap", "0"]) == 0
+    output = capsys.readouterr().out
+    assert "adher" in output and "syll" in output
+    assert "joint" not in output

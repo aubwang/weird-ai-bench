@@ -1,8 +1,4 @@
-"""Private, offline render inputs for an explicitly selected saved song.
-
-This module only prepares files. It does not load a singing model, infer timings,
-rescore a run, or determine whether its inputs may be used or published.
-"""
+"""Write YingMusic-Singer-Plus inputs for one saved song. Renders nothing."""
 
 from __future__ import annotations
 
@@ -43,7 +39,7 @@ def _fields(value, required: set[str], optional: set[str], name: str) -> dict:
 
 
 def performed_lines(run: dict) -> list[dict]:
-    """Expand the immutable performance snapshot, never a mutable local template."""
+    """Every sung line in performance order, from the run's own spec snapshot."""
     if (not isinstance(run, dict) or run.get("version") != 2 or
             not isinstance(run.get("spec_snapshot"), dict)):
         raise ValueError("export needs a version 2 run with a spec_snapshot")
@@ -67,7 +63,7 @@ def performed_lines(run: dict) -> list[dict]:
         for line in lines:
             _text(line, f"{key} lyric")
             if "|" in line:
-                raise ValueError(f"{key}: lyric contains ambiguous Ying phrase delimiter '|'")
+                raise ValueError(f"{key}: lyrics can't contain '|', Ying's line separator")
     out = []
     for occurrence, key in enumerate(spec.performance_order, 1):
         sec, part = spec.sections[key], parts[key]
@@ -90,7 +86,7 @@ def _audio(value, base: Path, name: str) -> dict:
     path = (base / path).resolve() if not path.is_absolute() else path.resolve()
     if not path.is_file():
         raise ValueError(f"{name}: local audio file does not exist: {path}")
-    # PCM WAV is deliberately the small, dependency-free export boundary.
+    # PCM WAV only, so the standard library can check it.
     try:
         with path.open("rb") as source:
             with wave.open(source, "rb") as wav:
@@ -116,7 +112,7 @@ def _audio(value, base: Path, name: str) -> dict:
 
 
 def _strict_map(raw: str) -> dict:
-    """Reject duplicate YAML keys instead of silently replacing a clip or transcript."""
+    """Load YAML, rejecting duplicate keys rather than keeping the last one."""
     class UniqueLoader(yaml.SafeLoader):
         pass
 
@@ -137,7 +133,7 @@ def _strict_map(raw: str) -> dict:
 
 
 def prepare_export(run_path: str | Path, audio_map_path: str | Path) -> tuple[dict, list[dict]]:
-    """Validate inputs and prepare a provenance manifest and upstream JSONL rows."""
+    """Check the inputs and build the manifest and the JSONL rows."""
     run_path, audio_map_path = Path(run_path).resolve(), Path(audio_map_path).resolve()
     run_bytes, map_bytes = run_path.read_bytes(), audio_map_path.read_bytes()
     try:
@@ -150,7 +146,7 @@ def prepare_export(run_path: str | Path, audio_map_path: str | Path) -> tuple[di
     if type(mapping["version"]) is not int or mapping["version"] != 1:
         raise ValueError("audio map version must be 1")
     if mapping["voice_mode"] != "single_voice_per_clip":
-        raise ValueError("set voice_mode: single_voice_per_clip; automatic duets/choirs are unsupported")
+        raise ValueError("voice_mode must be single_voice_per_clip; duets and choirs aren't supported")
     clips = mapping["clips"]
     if not isinstance(clips, list) or not clips:
         raise ValueError("audio map clips must be a nonempty list")
@@ -178,7 +174,7 @@ def prepare_export(run_path: str | Path, audio_map_path: str | Path) -> tuple[di
         backing = (_audio(clip["backing"], audio_map_path.parent, f"{name} backing")
                    if "backing" in clip else None)
         selected = copy.deepcopy(lines[start - 1:end])
-        # IDs never contain a user-provided run id: upstream uses them as filenames.
+        # Upstream uses the id as a filename, so build it from hashes, not the run id.
         identity = json.dumps([_hash(run_bytes), index, start, end, source["sha256"],
                                timbre["sha256"], ref_text], ensure_ascii=False).encode("utf-8")
         item_id = f"song-{_hash(identity)[:16]}-clip-{index:04d}"
@@ -198,32 +194,21 @@ def prepare_export(run_path: str | Path, audio_map_path: str | Path) -> tuple[di
                      "generation_scoring_version")
     manifest = {
         "format": "weird-ai-bench-song-export", "version": 1,
-        "status": "prepared_only", "selection": "explicit_run_path",
         "run": {"id": run["id"], "path": str(run_path), "sha256": _hash(run_bytes)},
         "audio_map": {"path": str(audio_map_path), "sha256": _hash(map_bytes)},
         "benchmark_snapshot": {k: copy.deepcopy(run[k]) for k in snapshot_keys if k in run},
         "voice_mode": mapping["voice_mode"], "performed_lines": lines, "clips": segments,
-        "rights": {"status": "not_verified", "user_supplied_note": rights_note},
-        "backend": {"repository": YING_REPOSITORY, "inspected_revision": YING_REVISION,
-                    "intended_model": YING_MODEL, "input_file": "ying-input.jsonl",
-                    "consumer": "inference_mp.py --input_type jsonl",
-                    "model_revision": None, "rendered": False},
-        "limits": [
-            "Audio metadata and hashes checked; vocal isolation and transcript accuracy not verified.",
-            "Each clip is one voice; sung_by records the lyric spec, not generated voice identities.",
-            "Line ranges map lyrics to supplied clips, not lyric/audio timings; inspect short clips first.",
-            "Backing tracks are provenance only; JSONL does not mix, align, stitch, or render audio.",
-            "No checkpoint downloaded or inspected and no model run; no offline-runtime guarantee.",
-            "Use a prepared Plus checkpoint explicitly; upstream infer_api.py loads the older model.",
-        ],
+        "rights_note": rights_note,
+        "backend": {"repository": YING_REPOSITORY, "revision": YING_REVISION,
+                    "model": YING_MODEL, "input_file": "ying-input.jsonl"},
     }
-    # Reject non-finite values, which otherwise create nonstandard JSON artifacts.
+    # NaN or infinity would write invalid JSON.
     json.dumps(manifest, allow_nan=False)
     return manifest, rows
 
 
 def export_song(run_path: str | Path, audio_map_path: str | Path, out_dir: str | Path) -> Path:
-    """Write a new private output directory; never overwrite inputs or prior exports."""
+    """Write the export to a new directory readable only by you; never overwrites."""
     out = Path(out_dir).expanduser()
     if out.exists() or out.is_symlink():
         raise ValueError(f"output already exists: {out}; choose a new directory")

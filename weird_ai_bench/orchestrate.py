@@ -56,9 +56,8 @@ class RunConfig:
         """Check the settings; with a spec and scenario, also check they fit this song."""
         if type(self.tolerance) is not int or self.tolerance < 0:
             raise ConfigError("tolerance must be a whole number 0 or more.")
-        if (spec is not None and self.tolerance and
-                any(line.prosody for sec in spec.sections.values() for line in sec.lines)):
-            raise ConfigError("Exact prosody settings cannot use --tolerance; use --tolerance 0.")
+        if spec is not None and self.tolerance and spec.uses_prosody:
+            raise ConfigError("A template with prosody settings cannot use --tolerance.")
         self.chorus = str(self.chorus)
         for name, val, allowed in (("names", self.names, NAMES), ("track", self.track, TRACKS),
                                    ("guidance", self.guidance, GUIDANCE)):
@@ -563,7 +562,7 @@ def render_sheet(result: dict, spec: SongSpec | None = None, blind: bool = False
         out.append("## Scores\n" + "\n".join(rows))
         issues = []
         for key, v in result["verification"].items():
-            for e in SectionReport(section=key, lines=[LineReport(**l) for l in v["lines"]],
+            for e in SectionReport(section=key, lines=[LineReport.from_dict(l) for l in v["lines"]],
                                    expected_lines=v["expected_lines"],
                                    structure_errors=v["structure_errors"],
                                    rhyme_errors=v["rhyme_errors"]).errors(GATES):

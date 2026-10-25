@@ -2,10 +2,8 @@
 
 from collections import Counter
 
-from .verify import METER_GATES
-
 METRICS_VERSION = 1
-RATE_METRICS = ("exact_syllables", "syllables", "joint_prosody", "stress", "phrase", "rhyme")
+RATE_METRICS = ("exact_syllables", "syllables", "stress", "phrase", "rhyme")
 
 
 def line_metrics(report, line_spec, rhyme_required=False):
@@ -17,7 +15,6 @@ def line_metrics(report, line_spec, rhyme_required=False):
     return {
         "exact_syllables": bool(present and report.exact_syllables_ok),
         "syllables": bool(present and report.syllables_ok),
-        "joint_prosody": bool(present and report.meter_passed(METER_GATES)),
         "stress": bool(present and report.meter_passed(("syllables", "stress"))) if stress else None,
         "phrase": bool(present and report.meter_passed(("syllables", "split"))) if phrase else None,
         "rhyme": bool(present and report.rhyme_ok) if rhyme_required else None,

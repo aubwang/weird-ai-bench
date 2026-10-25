@@ -67,6 +67,10 @@ Tests use `ScriptedClient`, so they don't need the network.
   never groups guided and unguided songs together.
 - **Presets are context, not model output.** They're verified but never
   credited to a model or retried.
+- **Prosody settings are discrete.** A line can list several ways to sing it
+  (`note_spans`, with their own stress and split), and must fit one of them
+  completely under one pronunciation. Only templates that use settings get the
+  extra prompt and judge text, so other songs keep their earlier prompts.
 - **Copying the original earns nothing.** A generated line made mostly of
   4-grams from the reference lyrics fails the `originality` gate and scores 0,
   since the reference lines pass the meter checks by construction.
@@ -78,7 +82,9 @@ Tests use `ScriptedClient`, so they don't need the network.
   judges each pair twice with the order swapped, and a disagreement counts as a
   tie. When every family is also a contestant, use a panel of judges from
   several families: each pair skips the judges from its singers' families.
-  Meter is reported beside the judged rating, not blended into it.
+  Meter is reported beside the judged rating, not blended into it. Cached
+  judgments are keyed by a hash of what the judge saw, so a rescored run is
+  judged again.
 - **The fit is weighted additive Bradley-Terry.** A song's strength is its
   singers' model strengths weighted by each singer's share of the generated
   lines as performed, so a repeated chorus counts for its writer and a
@@ -89,7 +95,9 @@ Tests use `ScriptedClient`, so they don't need the network.
 - **Grouping is by content.** Leaderboard groups compare the template,
   scenario text, reference lyrics, and supplied sections by content, never by
   file name or id. Settings that change outcomes (tolerance, temperature,
-  effort, and on the strict track, gates and retries) are part of the group.
+  effort, and on the strict track, gates, retries, and the scoring version the
+  retry feedback came from) are part of the group. `stats` and `leaderboard`
+  refuse runs scored under different rules until they're rescored.
 
 ## Open questions
 

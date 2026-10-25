@@ -15,8 +15,6 @@ As a Python CLI this project allows you to: define songs and scenarios, assign m
 - [How it works](#how-it-works)
 - [Run it yourself](#run-it-yourself)
 
-Want to hear a favorite result? [Export a selected song for local YingMusic-Singer-Plus production](docs/song-export.md). This optional step prepares private inputs without changing scores or loading a singing model.
-
 ## What parody writing tests
 
 Writing a good song parody at times feels like a literary constrained optimization problem. First, a replacement line must fit the melody, it must respect the meter, rhyme, and structure of the line, and lastly it needs to match the theme of the song, narratively progress the verse, and be funny. Additionally, humans can intrinsically "feel out" syllable placement and stresses by listening to the song, while text LLMs must derive these from raw lyrics. Later, when we look at some example lines, you'll see how hard it is to "hear out" the lines to a song without reference audio.
@@ -216,7 +214,7 @@ Runs are grouped by their content and settings so different tasks are not silent
 
 ### Make your own base song template
 
-Start from [`two_voices.yaml`](weird_ai_bench/data/specs/two_voices.yaml) as an example and the [authoring guide](docs/authoring.md). `weird-ai-bench spec --spec your-song.yaml` prints the song map and flags differing counts for manual review. For verified melodic alternatives, the [authoring guide](docs/authoring.md#explicit-prosody-settings-and-melisma) describes exact syllable-to-note settings, including melisma, with setting-specific stress and phrasing. Count tolerance alone does not establish melody fit.
+Start from [`two_voices.yaml`](weird_ai_bench/data/specs/two_voices.yaml) as an example and the [authoring guide](docs/authoring.md). `weird-ai-bench spec --spec your-song.yaml` prints the song map and suggests where a line needs syllable slack. For a line that can be sung more than one way, such as with a held note, see [prosody settings](docs/authoring.md#prosody-settings-and-melisma).
 
 ## Run it yourself
 
@@ -258,6 +256,10 @@ weird-ai-bench leaderboard runs/ --judge provider/independent-judge
 `matrix` rotates models through the singer roles. `stats` summarizes automated checks without API calls; `leaderboard` requests pairwise judgments and fits model ratings. Use at least three models, or add `--include-self`, to avoid a comparison in which every duet has the same two singers. Choose a judge from a different model family than the singers, or repeat `--judge` to build a panel.
 
 The [CLI reference](docs/reference.md) covers the remaining options and the scoring rules.
+
+### Hear a song
+
+`weird-ai-bench export-song` turns a saved run and your own vocal clips of the original into inputs for [YingMusic-Singer-Plus](docs/song-export.md), which sings the new lyrics to the original melody. It doesn't render audio or change scores.
 
 
 ## License

@@ -64,13 +64,17 @@ class LineReport:
     copied: bool | None = None  # None: not checked against the original lyrics
     copied_words: list[str] = field(default_factory=list)
     guessed_words: list[str] = field(default_factory=list)
-    prosody_mode: str = "legacy_count"
     allowed_counts: list[int] = field(default_factory=list)
-    setting_name: str | None = None  # setting evaluated; not necessarily a pass
+    setting_name: str | None = None  # the closest setting, which may still fail
     note_spans: list[int] = field(default_factory=list)
-    # Feasible JOINT outcomes, not independent permissions to mix readings.
-    # At most eight distinct masks, independent of the number of readings.
+    # Which meter checks each possible reading passes, one entry per distinct outcome.
+    # A gate set passes only if one reading passes all of it.
     meter_options: list[dict[str, bool]] = field(default_factory=list)
+
+    @classmethod
+    def from_dict(cls, d: dict) -> LineReport:
+        """Rebuild a saved report, skipping fields this version no longer has."""
+        return cls(**{k: v for k, v in d.items() if k in cls.__dataclass_fields__})
 
     @property
     def stress_ok(self) -> bool:
@@ -91,17 +95,16 @@ def analyze_line(text: str, spec: LineSpec, overrides: dict | None = None,
     toks = tokenize(text, overrides)
     if spec.prosody:
         if tolerance:
-            raise ValueError("exact prosody settings cannot use --tolerance")
+            raise ValueError("prosody settings cannot use --tolerance")
         reports = []
         for setting in spec.prosody:
             meter = LineSpec(setting.syllables, setting.stress, setting.split)
             rep = _analyze_meter(text, toks, meter, 0, index)
-            rep.prosody_mode = "explicit_settings"
             rep.allowed_counts = sorted({p.syllables for p in spec.prosody})
             rep.setting_name = setting.name
             rep.note_spans = list(setting.note_spans)
             reports.append(rep)
-        # Never combine a count from one setting with stress/split from another.
+        # Report the closest setting; never mix one setting's count with another's stress.
         chosen = min(reports, key=lambda r: (
             not r.syllables_ok,
             r.stress_required - r.stress_hits + (r.split_ok is False),
@@ -171,11 +174,11 @@ def _analyze_meter(text: str, toks: list[Token], spec: LineSpec,
     def rank(item):
         (pos, hit), (viol, _) = item
         count_ok = -rep.under <= pos - spec.syllables <= rep.over
+        if not count_ok:
+            return (True, abs(pos - spec.syllables), viol)
+        # Within the allowed counts, fewest stress and pause misses wins over nearest count.
         missing = sum(b > pos for b in required)
-        # An accepted pronunciation satisfying all constraints beats a nearer
-        # count which violates stress or the phrase boundary.
-        return (not count_ok, viol + missing + (split_at is not None and not hit),
-                abs(pos - spec.syllables)) if count_ok else (True, abs(pos - spec.syllables), viol)
+        return (False, viol + missing + (split_at is not None and not hit), abs(pos - spec.syllables))
 
     (pos, hit), (viol, path) = min(states.items(), key=rank)
     rep.count = pos
@@ -243,6 +246,14 @@ def _joined(prev: WordInfo, last: WordInfo) -> WordInfo:
             prons.append(Pron(p1.phones + weak, p1.stresses + (0,) * p2.syllables))
     return WordInfo(text=f"{prev.text} {last.text}", norm=f"{prev.norm} {last.norm}",
                     prons=prons, weak=False, guessed=False)
+
+
+def line_ends(toks: list[Token]) -> list[WordInfo]:
+    """Rhyme candidates: the last word, and with an enclitic, the last two words."""
+    ends = [t.info for t in toks[-1:]]
+    if len(toks) > 1 and toks[-1].info.norm in _ENCLITICS:
+        ends.append(_joined(toks[-2].info, toks[-1].info))
+    return ends
 
 
 def _last_vowel(part: tuple[str, ...]) -> str | None:
@@ -341,14 +352,14 @@ def rhyme_credit(l: LineReport) -> float | None:
     return 0.1 if l.rhyme_level == "same_sound" else 0.0
 
 
-def _norm_text(s: str) -> str:
+def norm_text(s: str) -> str:
     s = strip_adlibs(s).lower().replace("’", "'")
     return " ".join(re.sub(r"[^\w' ]", " ", s).split())
 
 
 def _reference_index(reference: list[str]) -> tuple[set[str], set[tuple[str, ...]]]:
     """Normalized reference lines, and their word grams (none span a line break)."""
-    lines = [_norm_text(r).split() for r in reference]
+    lines = [norm_text(r).split() for r in reference]
     grams = {tuple(w[i:i + COPY_GRAM]) for w in lines for i in range(len(w) - COPY_GRAM + 1)}
     return {" ".join(w) for w in lines if w}, grams
 
@@ -451,10 +462,11 @@ class SectionReport:
                 out.append(f"{n} (\"{l.text}\") has {l.count} syllables; it needs {need}.")
             if not meter_passed and l.syllables_ok:
                 if l.setting_name is not None:
-                    out.append(f"{n}: no single declared prosody setting and pronunciation satisfies "
-                               f"the selected meter checks; details below use setting '{l.setting_name}'.")
+                    out.append(f"{n} (\"{l.text}\") doesn't fit any one setting; the closest is "
+                               f"'{l.setting_name}'.")
                 elif all(l.meter_passed([g]) for g in gates if g in METER_GATES):
-                    out.append(f"{n}: no single pronunciation satisfies the selected meter checks together.")
+                    out.append(f"{n} (\"{l.text}\") can't pass its count, stress, and pause checks "
+                               f"with one pronunciation.")
             if not meter_passed and "stress" in gates and l.syllables_ok and not l.stress_ok:
                 out.append(f"{n} (\"{l.text}\"): " + "; ".join(l.stress_issues) + ".")
             if not meter_passed and "split" in gates and l.split_ok is False and l.syllables_ok:
@@ -532,15 +544,15 @@ def verify_section(lines: list[str], sec: SectionSpec, overrides: dict | None = 
             hook_text = lr.text
     for lr, ls in zip(rep.lines, specs):
         if ls.repeats_hook and hook_text:
-            lr.hook_ok = _norm_text(lr.text).endswith(_norm_text(hook_text))
+            lr.hook_ok = norm_text(lr.text).endswith(norm_text(hook_text))
             if not lr.hook_ok:
                 rep.structure_errors.append(
                     f"Line {lr.index} must end with the hook (\"{strip_adlibs(hook_text)}\").")
     if reference is not None:
         index = _reference_index(reference)
-        hook_words = _norm_text(hook_text).split() if hook_text and hook_given else []
+        hook_words = norm_text(hook_text).split() if hook_text and hook_given else []
         for lr, ls in zip(rep.lines, specs):
-            words = _norm_text(lr.text).split()
+            words = norm_text(lr.text).split()
             if ls.repeats_hook and hook_words and words[-len(hook_words):] == hook_words:
                 words = words[:-len(hook_words)]
             lr.copied_words = copied_phrases(words, index)
@@ -551,10 +563,7 @@ def verify_section(lines: list[str], sec: SectionSpec, overrides: dict | None = 
     for lr in rep.lines:
         toks = tokenize(lr.text, overrides)
         words[lr.index] = toks[-1].info if toks else None
-        # Rhyme candidates: the last word, and with an enclitic, the last two words.
-        ends[lr.index] = [t.info for t in toks[-1:]]
-        if len(toks) > 1 and toks[-1].info.norm in _ENCLITICS:
-            ends[lr.index].append(_joined(toks[-2].info, toks[-1].info))
+        ends[lr.index] = line_ends(toks)
     groups: dict[str, list[LineReport]] = {}
     refrain_by_line = {i: ls.refrain for i, ls in enumerate(specs, 1)}
     for lr, ls in zip(rep.lines, specs):
@@ -625,7 +634,7 @@ def verify_section(lines: list[str], sec: SectionSpec, overrides: dict | None = 
 def originality(lines: list[str], original_text: str, n: int = 4) -> dict:
     """Word n-gram overlap between generated lines and the original lyrics."""
     def grams(text: str) -> set[tuple[str, ...]]:
-        w = _norm_text(text).split()
+        w = norm_text(text).split()
         return {tuple(w[i:i + n]) for i in range(len(w) - n + 1)}
 
     orig = grams(original_text)

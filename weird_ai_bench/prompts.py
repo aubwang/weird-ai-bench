@@ -70,13 +70,16 @@ def system_prompt(spec: SongSpec, cfg, scenario: Scenario, singer: int,
            + " Anything outside the tags is ignored.")
     borrow = "You can borrow a few words from the original song, but the lines should be new."
     if guided(cfg):
+        # Only songs with settings get the settings rule, so other songs keep the prompt
+        # their earlier runs were written under.
+        counting = "Count syllables as they're sung. Spell out numbers as words."
+        if spec.uses_prosody:
+            counting += (" Some lines offer several settings. Pick one and follow its count, "
+                         "stresses, and pause. A syllable held over several notes is still "
+                         "one syllable.")
         rules = [
             fmt,
-            "Count syllables as they're sung. Spell out numbers as words. A syllable held over "
-            "several notes (melisma) is still one syllable. When a line lists prosody settings, "
-            "use one complete setting, including its own stress positions and pause. Do not mix "
-            "settings or invent extra allowed syllables. The text checker verifies these authored "
-            "constraints; it cannot hear or establish the melody.",
+            counting,
             "Mark ad-libs with <adlib>...</adlib> on the same line, e.g. "
             "We head home <adlib>home</adlib>. Ad-libs don't count toward syllables, stress, "
             "splits, or rhyme. Parenthesized trailing ad-libs are also accepted. "

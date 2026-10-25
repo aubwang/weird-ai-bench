@@ -165,6 +165,8 @@ def _context(result: dict) -> str:
         if ref is not None else ""
     )
     by = "one AI model" if n == 1 else f"{n} AI models"
+    settings_note = ("Where a line lists settings, any one of them fits; a syllable held over "
+                     "several notes is still one syllable. " if spec.uses_prosody else "")
     return (
         f'This is a parody written by {by} to the tune of "{spec.title}" '
         f"({spec.artist}). {chorus_note}\n\n{setup_note}\n\n{ref_note}{refrain_note}"
@@ -172,12 +174,7 @@ def _context(result: dict) -> str:
         f"You can't hear it, so judge singability from the text, the target counts, and the "
         f"automated check results listed after each song. The checker counts syllables and rhymes "
         f"from a pronouncing dictionary and can be wrong about how a word is sung, so weigh each "
-        f"miss by how much it would hurt a real performance. "
-        f"Melisma holds one syllable across several notes; it does not add syllables. "
-        f"Where explicit prosody settings are supplied, their note spans and stress positions "
-        f"are author-provided constraints, not observations of a performance. Count tolerance "
-        f"in legacy templates is not evidence of melody fit. Neither reference text nor a "
-        f"passing check establishes performed singability. "
+        f"miss by how much it would hurt a real performance. {settings_note}"
         f"Text inside <adlib> tags is an uncounted ad-lib, not part of the main line's meter or rhyme."
     )
 
@@ -208,18 +205,12 @@ def check_notes(result: dict) -> str:
                 need = (" or ".join(map(str, line["allowed_counts"])) if line.get("allowed_counts") else
                         f"{lo} to {hi}" if lo != hi else str(lo))
                 found.append(f"line {line['index']} has {line.get('count')} syllables (target {need})")
-            if line.get("setting_name") is not None:
-                passed = (line.get("syllables_ok") and
-                          line.get("stress_hits") == line.get("stress_required") and
-                          line.get("split_ok") is not False)
-                found.append(f"line {line['index']} evaluated setting '{line['setting_name']}' "
-                             f"({'matches declared meter' if passed else 'meter mismatch'})")
             if line.get("syllables_ok"):
                 found.extend(f"line {line['index']}: {issue}" for issue in line.get("stress_issues", []))
                 if line.get("split_ok") is False:
-                    found.append(f"line {line['index']} misses its required phrase boundary")
+                    found.append(f"line {line['index']} is missing its pause")
             if line.get("guessed_words"):
-                found.append(f"line {line['index']} uses estimated pronunciations: " +
+                found.append(f"line {line['index']} has guessed pronunciations: " +
                              ", ".join(line["guessed_words"]))
             if line.get("copied"):
                 found.append(f"line {line['index']} copies the original")
@@ -282,6 +273,11 @@ def scenario_terms(result: dict) -> tuple[str, ...]:
     names = {n for m in result["config"]["models"]
              for n in (m, display_name(m), *FAMILY_ALIASES.get(family(m), []))}
     return tuple(n for n in names if re.search(rf"(?<!\w){re.escape(n)}(?!\w)", setup, re.I))
+
+
+def judge_inputs(result: dict) -> list:
+    """Everything the judge sees about one song, for cache keys."""
+    return [_context(result), _sheet(result), list(criteria(result))]
 
 
 def _sheet(result: dict) -> str:

@@ -57,13 +57,38 @@ Original reference lines provide context, not required output words. Section
 and speaker tags are built automatically. The same reference is used for the
 originality report. Leave `reference` out if no reference should be supplied.
 
+## Start from a draft
+
+`weird-ai-bench draft` writes a first version of a template from a lyrics file:
+
+```sh
+weird-ai-bench draft lyrics_my-song.txt --out songs/local/my-song.yaml --artist "Someone"
+```
+
+Mark sections with `[Verse 1]`, `[Chorus]`, and so on, or separate them with blank
+lines. A section whose words come back later is sung again rather than copied, and
+the most repeated one becomes the chorus. Trailing `(...)` text becomes ad-libs.
+
+From the words alone, the draft fills in syllable counts, rhyme groups, a `split`
+where a line has one comma or dash, and `hook` and `repeats_hook` when other lines
+end with a chorus line. Lines with the same end word share a `refrain` label.
+Stresses are marked only on the stressed syllable of longer words, where the
+dictionary leaves no doubt. Before writing, it checks the original lyrics against
+the draft and drops anything they'd fail, so the source always passes.
+
+The draft is for one singer. For a duet, raise `singers` and assign the sections.
+`# TODO` comments mark words the dictionary doesn't know or can count two ways.
+Then listen through: a held note, a squeezed syllable, or a stress the melody moves
+needs your edit, and `weird-ai-bench spec --spec songs/local/my-song.yaml` shows
+the result.
+
 ## Meter, rhyme, and optional checks
 
 | Field | Meaning |
 |---|---|
 | `syllables: 8` | Required main-line syllable count |
-| `slack: 2` | Legacy syllable-count tolerance, not a melody model. `slack: [0, 2]` sets fewer and more separately; retained for existing templates |
-| `stress: [2, 4]` | Required lexically strong syllable positions, counted from 1; these are not beat or note indices |
+| `slack: 2` | Syllables either side of the target that still fit, for looser stretches of melody; prompts show the range. `slack: [0, 2]` sets fewer and more separately |
+| `stress: [2, 4]` | Syllables that must be stressed, counted from 1 (syllables, not notes) |
 | `split: [4, 4]` | Pause at the syllable boundary between the two halves |
 | `rhyme: A` | End word belongs to group A within this section |
 | `internal_rhyme: true` | Two words somewhere within the line must rhyme |
@@ -103,23 +128,16 @@ To keep scoring rhyme but stop using it as a retry condition, run with:
 Changing the YAML changes the task requirements. Changing `--gates` changes
 which failures cause retries. `--track freeform` never retries. `--tolerance 1`
 allows a one-syllable count deviation on every line; a line's `slack` applies
-instead where it's larger. This legacy tolerance only widens the count check: it
-does not identify where a syllable may be added, held, or omitted, and it does not
-remap stress or phrase boundaries. `weird-ai-bench spec` flags differing legacy
-counts for manual review without inferring a shared melody. Record these choices
-when comparing benchmark results; automatic grouping does not cover every
-generation setting.
+instead where it's larger. Neither says where the extra syllable goes or moves the
+stresses; for that, use prosody settings. `weird-ai-bench spec` suggests `slack`
+where sections of the same length disagree on counts, since a melody that fits
+both is looser there. Record these choices when comparing benchmark results;
+automatic grouping does not cover every generation setting.
 
-## Explicit prosody settings and melisma
+## Prosody settings and melisma
 
-Try the complete synthetic example without an API key:
-
-```sh
-weird-ai-bench check examples/melisma.txt --spec examples/melisma.yaml
-```
-
-For a line whose delivery has been checked against the source melody, use
-`prosody` instead of line-level `syllables`, `stress`, `split`, and `slack`:
+When a line can be sung more than one way, list each way as a setting instead of
+giving the line `syllables`, `stress`, `split`, and `slack`:
 
 ```yaml
 - reference: "The sky, is bright"
@@ -134,45 +152,31 @@ For a line whose delivery has been checked against the source melody, use
       split: [2, 1]
 ```
 
-This synthetic example declares four notes. The first setting assigns one
-syllable to each note; the second assigns its last syllable to the last two
-notes. Holding one syllable over several notes is **melisma**, and does not
-increase its syllable count. A setting's syllable count is the length of
-`note_spans`, not their sum. Spans must be positive whole numbers. Every setting
-for one line must cover the same total number of notes, and names must be unique.
+`note_spans` gives the number of notes each syllable takes. Both settings cover
+the same four notes: `four-attacks` puts a syllable on each, and `held-ending`
+holds the last syllable over two notes (melisma). A setting's syllable count is
+the length of `note_spans`, so this line takes four syllables or three, never
+anything else. Every setting for a line must cover the same number of notes, and
+names must be unique within the line.
 
-`stress` and `split` belong to each setting and use that setting's **syllable
-indices**. They are not inherited, stretched, or shifted from another setting.
-The line must satisfy the count, stress, and phrase boundary of one complete
-setting under one dictionary pronunciation path. Alternative counts are discrete:
-allowing two and four syllables does not allow three. The checker reports the
-setting it evaluated and any failed constraints; that label is not proof that a
-singer performed the declared alignment. Multiple settings can be compatible
-with the same text. Nonzero `--tolerance` is rejected for a template containing
-explicit settings, before generation begins. Legacy and explicit lines can
-otherwise coexist in one template.
+`stress` and `split` count the setting's own syllables. A line passes when it
+fits one setting completely, under one pronunciation: it can't take its count from
+one setting and its stresses from another. The checker reports the closest
+setting. Templates with settings can't use `--tolerance`, and lines with and
+without settings can share a template.
 
-For strict retries, the enabled meter gates must all pass under one setting and
-pronunciation. Disabling stress cannot make its failure trigger a split retry.
-Numeric scores still use the same best joint reading across all authored meter
-constraints, independent of enabled retry gates. Per-gate pass flags may refer
-to different valid readings; `meter_joint_pass` explicitly reports whether one
-reading passes all three meter checks together.
+On the strict track, the enabled meter gates must all pass under one setting and
+pronunciation, so turning off the stress gate never causes a split retry. Scores
+use the best reading across all three meter checks, whatever the gates.
+`meter_joint_pass` in a section's report says whether one reading passed all three.
 
-The spans are author-provided annotations over a shared note sequence. The
-checker does not recover a tune from lyrics, listen to audio, infer note pitches
-or durations, or establish whether a syllable fits in the time available. It
-cannot establish that a proposed melisma or alternative is musically natural.
-Validate the settings manually against the score or recording before collecting
-results, independently of which model produced a candidate. This format does
-not model rests, pickups, syllable compression within a note, or inserted notes;
-do not use arbitrary spans as a substitute for those annotations. When no
-reliable musical annotation is available, retain an exact text-count baseline
-and describe it as such.
+Settings are your annotation, checked against the recording or score; the checker
+can't hear the song. They don't cover rests, pickups, or two syllables squeezed
+onto one note. To try the example without an API key:
 
-The dictionary's pronunciation choices, dialect coverage, and stress estimates
-remain limitations. Unknown words are labeled as estimated in reports and judge
-context; a text-check pass is not a measurement of performed singability.
+```sh
+weird-ai-bench check examples/melisma.txt --spec examples/melisma.yaml
+```
 
 ## Prewritten sections
 
