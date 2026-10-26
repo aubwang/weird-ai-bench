@@ -427,17 +427,20 @@ def cmd_leaderboard(args) -> int:
         return 1
     ci = lb["table"][0]["elo_lo"] is not None
     print(f"{'#':>2}  {'model':<44} {'elo':>5} " + (f"{'95% interval':>13} " if ci else "")
-          + f"{'games':>6} {'win%':>6} {'adher':>6} {'syll':>6}")
+          + f"{'games':>6} {'win%':>6} {'adher':>6} {'syll':>6} {'copy':>6}")
     for i, r in enumerate(lb["table"], 1):
         band = f"{r['elo_lo']:>6}-{r['elo_hi']:<6} " if ci else ""
         win = "–" if r["win_rate"] is None else f"{r['win_rate']:.0%}"
         adherence = _pct(r.get("adherence"))
         metrics = r.get("metrics") or {}
         syllables = _pct(metrics.get("syllables", {}).get("rate"))
-        print(f"{i:>2}  {r['model']:<44} {r['elo']:>5} {band}{r['games']:>6} {win:>6} {adherence:>6} {syllables:>6}")
+        copied = _pct(metrics.get("copy_rate"))
+        print(f"{i:>2}  {r['model']:<44} {r['elo']:>5} {band}{r['games']:>6} {win:>6} "
+              f"{adherence:>6} {syllables:>6} {copied:>6}")
     if ci:
         print("\nIntervals resample songs within each group; overlapping intervals are not a ranking.")
-    print("Adher is composite adherence; syll is count-pass (including declared slack).\n"
+    print("Adher is composite adherence; syll is count-pass (including declared slack); copy is the share of\n"
+          "checked lines copied from the original, which can still pass syll.\n"
           "These diagnostics are separate from the judged ranking; JSON includes exact counts, denominators and copying flags.")
     return 0
 

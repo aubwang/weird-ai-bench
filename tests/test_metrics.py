@@ -55,6 +55,18 @@ def test_copying_is_visible_without_disguising_raw_fit():
     assert m["copied"] == m["copy_checked"] == 1
 
 
+def test_copy_rate_shows_copying_the_fit_rates_let_through():
+    ls = LineSpec(2)
+    sec = SectionSpec("verse", "Verse", [ls, ls], {}, singer=1)
+    rep = verify_section(["Bright light", "Cold night"], sec, reference=["Bright light"])
+    run = {"scores": {"by_singer": {"1": {"model": "a/x",
+                                          "metrics": summarize_metrics(section_metrics(rep, sec))}}}}
+    m = diagnostics_by_model([run])["a/x"]
+    assert m["syllables"]["rate"] == 1 and m["copy_rate"] == .5
+    legacy = {"scores": {"by_singer": {"1": {"model": "a/x", "adherence": 1}}}}
+    assert diagnostics_by_model([run, legacy])["a/x"]["copy_rate"] is None
+
+
 def test_presets_excluded_and_empty_denominators_unavailable():
     spec = spec_from_dict({"id": "test", "title": "Synthetic", "artist": "Synthetic", "singers": 2,
         "generation_order": ["a", "b"], "performance_order": ["a", "b", "a"],
