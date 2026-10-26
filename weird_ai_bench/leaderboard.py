@@ -329,12 +329,13 @@ def diagnostics_by_model(runs: list[dict]) -> dict:
             for key in RATE_METRICS:
                 for count in ("passed", "total"):
                     a[key][count] += metrics[key][count]
+    rate = lambda a, n, d: n / d if d and not a["missing_singer_runs"] else None
     for a in acc.values():
+        # Never display a partial subset as the whole model's metric.
         for key in RATE_METRICS:
-            counts = a[key]
-            # Never display a partial subset as the whole model's metric.
-            counts["rate"] = (counts["passed"] / counts["total"]
-                              if counts["total"] and not a["missing_singer_runs"] else None)
+            a[key]["rate"] = rate(a, a[key]["passed"], a[key]["total"])
+        # The fit rates don't penalize copying, so its rate sits beside them.
+        a["copy_rate"] = rate(a, a["copied"], a["copy_checked"])
     return acc
 
 
