@@ -4,9 +4,67 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from importlib import resources
+import math
 from pathlib import Path
 
 import yaml
+
+RHYTHM_FORMATS = ("none", "beats", "grid", "aligned")
+
+
+@dataclass
+class RhythmSpec:
+    """Quarter-note beats for each syllable's onset and separate note attacks.
+
+    Tied segments are combined into one duration. Gaps between syllables are
+    rests; notes within one syllable are contiguous. start_beat preserves the
+    position of a phrase's first attack within the bar, including pickups.
+    """
+
+    onsets: list[float]
+    durations: list[list[float]]
+    start_beat: float = 0
+    beats_per_bar: float = 4
+    reference_syllables: list[str] = field(default_factory=list)
+    tempo_bpm: float | None = None
+
+    def __post_init__(self):
+        def number(x, minimum=0):
+            return type(x) in (int, float) and math.isfinite(x) and x >= minimum
+        if not number(self.beats_per_bar) or self.beats_per_bar == 0:
+            raise ValueError("rhythm beats_per_bar must be positive and finite")
+        if not number(self.start_beat) or self.start_beat >= self.beats_per_bar:
+            raise ValueError("rhythm start_beat must lie within the bar")
+        if self.tempo_bpm is not None and (not number(self.tempo_bpm) or self.tempo_bpm == 0):
+            raise ValueError("rhythm tempo_bpm must be positive and finite")
+        if (not isinstance(self.onsets, list) or not self.onsets or self.onsets[0] != 0
+                or any(not number(x) for x in self.onsets)):
+            raise ValueError("rhythm onsets must be finite nonnegative beats starting at zero")
+        if not isinstance(self.durations, list) or len(self.durations) != len(self.onsets):
+            raise ValueError("rhythm needs one duration list per syllable onset")
+        for i, durations in enumerate(self.durations):
+            if (not isinstance(durations, list) or not durations
+                    or any(not number(x) or x == 0 for x in durations)):
+                raise ValueError("rhythm note durations must be positive finite beats")
+            if i + 1 < len(self.onsets) and self.onsets[i] + sum(durations) > self.onsets[i + 1] + 1e-9:
+                raise ValueError("rhythm syllables cannot overlap")
+        if (not isinstance(self.reference_syllables, list)
+                or (self.reference_syllables and len(self.reference_syllables) != len(self.onsets))
+                or any(not isinstance(s, str) or not s.strip() or any(c.isspace() for c in s)
+                       for s in self.reference_syllables)):
+            raise ValueError("rhythm reference_syllables must label each syllable with one nonempty token")
+
+    def rests(self) -> dict[int, float]:
+        """Positive gaps, keyed by the 1-based preceding syllable position."""
+        return {i + 1: gap for i in range(len(self.onsets) - 1)
+                if (gap := self.onsets[i + 1] - self.onsets[i] - sum(self.durations[i])) > 1e-9}
+
+
+def _validate_split_mode(mode, split):
+    if mode not in ("punctuation", "word"):
+        raise ValueError("split_mode must be punctuation or word")
+    if mode != "punctuation" and split is None:
+        raise ValueError("split_mode=word needs a split")
 
 
 @dataclass
@@ -34,6 +92,8 @@ class ProsodySetting:
     note_spans: list[int]
     stress: list[int] = field(default_factory=list)
     split: list[int] | None = None
+    split_mode: str = "punctuation"
+    rhythm: RhythmSpec | None = None
 
     def __post_init__(self):
         if not isinstance(self.name, str) or not self.name.strip():
@@ -42,6 +102,12 @@ class ProsodySetting:
                 any(type(n) is not int or n < 1 for n in self.note_spans)):
             raise ValueError("prosody note_spans must be a nonempty list of positive whole numbers")
         _validate_meter(self.syllables, self.stress, self.split)
+        _validate_split_mode(self.split_mode, self.split)
+        if self.rhythm is not None:
+            if not isinstance(self.rhythm, RhythmSpec):
+                raise ValueError("prosody rhythm must be a RhythmSpec")
+            if [len(d) for d in self.rhythm.durations] != self.note_spans:
+                raise ValueError("rhythm durations must match notes per syllable")
 
     @property
     def syllables(self) -> int:
@@ -78,6 +144,7 @@ class LineSpec:
     # for both sides, or [fewer, more].
     slack: int | list[int] = 0
     prosody: list[ProsodySetting] = field(default_factory=list)
+    split_mode: str = "punctuation"
 
     def __post_init__(self):
         parts = self.slack if isinstance(self.slack, list) and len(self.slack) == 2 else [self.slack]
@@ -86,7 +153,7 @@ class LineSpec:
         if not isinstance(self.prosody, list) or any(not isinstance(p, ProsodySetting) for p in self.prosody):
             raise ValueError("prosody must be a list of settings")
         if self.prosody:
-            if self.syllables is not None or self.stress or self.split is not None or any(parts):
+            if self.syllables is not None or self.stress or self.split is not None or any(parts) or self.split_mode != "punctuation":
                 raise ValueError("prosody replaces line syllables, stress, split, and slack; put meter in each setting")
             if len({p.name for p in self.prosody}) != len(self.prosody):
                 raise ValueError("prosody setting names must be unique within a line")
@@ -94,6 +161,7 @@ class LineSpec:
                 raise ValueError("prosody settings must cover the same total number of notes")
         else:
             _validate_meter(self.syllables, self.stress, self.split)
+            _validate_split_mode(self.split_mode, self.split)
 
 
 @dataclass
@@ -112,6 +180,12 @@ class SectionSpec:
     singer: int | None = None  # verses: which singer writes it
     sung_by: list[int] | None = None  # the shared chorus: which singers sing it
     trade: list[int] | None = None  # bridge: singer for each line
+    craft_notes: list[str] = field(default_factory=list)
+
+    def __post_init__(self):
+        if (not isinstance(self.craft_notes, list) or
+                any(not isinstance(note, str) or not note.strip() for note in self.craft_notes)):
+            raise ValueError("craft_notes must be a list of nonempty strings")
 
     @property
     def is_chorus(self) -> bool:
@@ -132,6 +206,10 @@ class SongSpec:
     generation_order: list[str]
     performance_order: list[str]
     syllable_overrides: dict[str, int]
+
+    @property
+    def uses_craft_guidance(self) -> bool:
+        return any(sec.craft_notes for sec in self.sections.values())
 
     @property
     def uses_prosody(self) -> bool:
@@ -175,8 +253,18 @@ def _line(d: dict) -> LineSpec:
     for p in prosody:
         if (not isinstance(p, dict) or set(p) - set(ProsodySetting.__dataclass_fields__) or
                 not {"name", "note_spans"} <= set(p)):
-            raise ValueError("prosody settings use name, note_spans, and optional stress and split")
-    d["prosody"] = [ProsodySetting(**p) for p in prosody]
+            raise ValueError("prosody settings use name, note_spans, and optional stress, split, split_mode and rhythm")
+    settings = []
+    for original in prosody:
+        p = dict(original)
+        if p.get("rhythm") is not None:
+            rhythm = p["rhythm"]
+            if (not isinstance(rhythm, dict) or set(rhythm) - set(RhythmSpec.__dataclass_fields__)
+                    or not {"onsets", "durations"} <= set(rhythm)):
+                raise ValueError("rhythm needs onsets and durations, with optional start_beat, beats_per_bar, tempo_bpm and reference_syllables")
+            p["rhythm"] = RhythmSpec(**rhythm)
+        settings.append(ProsodySetting(**p))
+    d["prosody"] = settings
     ir = d.get("internal_rhyme", False)
     if isinstance(ir, dict):
         if set(ir) - {"word_syllables", "end_word"}:
@@ -260,6 +348,7 @@ def spec_from_dict(raw: dict) -> SongSpec:
             singer=s.get("singer"),
             sung_by=_sung_by(s.get("sung_by"), key, total),
             trade=s.get("trade"),
+            craft_notes=s.get("craft_notes", []),
         )
         for i, ln in enumerate(lines, 1):
             if ln.rhyme and ln.rhyme not in rhymes:
@@ -367,16 +456,16 @@ def describe_internal_rhyme(rule: bool | InternalRhymeSpec) -> str:
     return f"a full end-sound rhyme between two different {size}words or acronyms{ending}"
 
 
-def describe_line(ln: LineSpec, idx: int, rhymes: dict[str, RhymeSpec]) -> str:
+def describe_line(ln: LineSpec, idx: int, rhymes: dict[str, RhymeSpec], rhythm: str = "none") -> str:
     """One-line human description of a line's constraints, used in prompts."""
     fewer, more = slack_bounds(ln)
-    parts = (["one of these settings: " + " or ".join(describe_setting(p) for p in ln.prosody)]
+    parts = (["one of these settings: " + " or ".join(describe_setting(p, rhythm) for p in ln.prosody)]
              if ln.prosody else
              [f"{ln.syllables} syllables" + (
                  f" ({max(ln.syllables - fewer, 1)} to {ln.syllables + more} fits)"
                  if fewer or more else "")])
     if ln.split and not ln.prosody:
-        parts.append(f"phrased {ln.split[0]} + {ln.split[1]} with a pause (comma or dash) after syllable {ln.split[0]}")
+        parts.append(f"phrased {ln.split[0]} + {ln.split[1]} with " + describe_split(ln.split[0], ln.split_mode))
     if ln.stress:
         parts.append("stressed syllables on " + ", ".join(str(p) for p in ln.stress))
     if ln.rhyme:
@@ -400,22 +489,60 @@ def describe_line(ln: LineSpec, idx: int, rhymes: dict[str, RhymeSpec]) -> str:
     return f"Line {idx}: " + "; ".join(parts)
 
 
-def describe_setting(setting: ProsodySetting) -> str:
+def describe_split(position: int, mode: str) -> str:
+    if mode == "word":
+        return f"a word boundary after syllable {position} (punctuation optional)"
+    return f"a pause (comma or dash) after syllable {position}"
+
+
+def describe_rhythm(rhythm: RhythmSpec, mode: str) -> str:
+    if mode not in RHYTHM_FORMATS:
+        raise ValueError(f"unknown rhythm format {mode!r}")
+    if mode == "none":
+        return ""
+    def num(n): return f"{n:g}"
+    def bracket(values): return "[" + ", ".join(num(n) for n in values) + "]"
+    phase = f"start beat {num(rhythm.start_beat)} in a {num(rhythm.beats_per_bar)}-beat bar (zero-based)"
+    phase += f", quarter-note tempo {num(rhythm.tempo_bpm)} bpm" if rhythm.tempo_bpm else ", tempo unspecified"
+    if mode == "grid":
+        def symbol(n):
+            return {0.25:"q", 0.5:"s", 1:"M", 1.5:"L", 2:"H"}.get(n, f"{num(n)}b")
+        cells = []
+        rests = rhythm.rests()
+        for i, durations in enumerate(rhythm.durations):
+            onset = rhythm.onsets[i] + rhythm.start_beat
+            pushed = onset % 1 != 0 and math.floor(onset + sum(durations) - 1e-9) > math.floor(onset)
+            cells.append("+".join(symbol(d) for d in durations) + (">" if pushed else ""))
+            if i + 1 in rests: cells.append(f"|{num(rests[i + 1])}b|")
+        return f"rhythm grid ({phase}): " + " ".join(cells)
+    timing = (f"rhythm in quarter-note beats ({phase}); syllable onsets {bracket(rhythm.onsets)}; "
+              "note durations per syllable [" + ", ".join(bracket(d) for d in rhythm.durations) + "]")
+    if mode == "aligned":
+        if not rhythm.reference_syllables:
+            raise ValueError("aligned rhythm requires reference syllables")
+        timing += "; source syllables by position " + ", ".join(
+            f"{i}:{s}" for i, s in enumerate(rhythm.reference_syllables, 1))
+    return timing
+
+
+def describe_setting(setting: ProsodySetting, rhythm: str = "none") -> str:
     parts = [f"{setting.name}: {setting.syllables} syllables",
              "notes per syllable [" + ", ".join(map(str, setting.note_spans)) + "]"]
     if setting.stress:
         parts.append("stressed syllables on " + ", ".join(map(str, setting.stress)))
     if setting.split:
-        parts.append(f"pause (comma or dash) after syllable {setting.split[0]}")
+        parts.append(describe_split(setting.split[0], setting.split_mode).removeprefix("a "))
+    if setting.rhythm is not None and rhythm != "none":
+        parts.append(describe_rhythm(setting.rhythm, rhythm))
     return "(" + "; ".join(parts) + ")"
 
 
-def describe_section(sec: SectionSpec) -> str:
+def describe_section(sec: SectionSpec, rhythm: str = "none") -> str:
     out = [f"{sec.label}:"]
     if sec.note:
         out.append(sec.note)
     for i, ln in enumerate(sec.lines, 1):
-        out.append("  " + describe_line(ln, i, sec.rhymes))
+        out.append("  " + describe_line(ln, i, sec.rhymes, rhythm))
     groups = {}
     for i, ln in enumerate(sec.lines, 1):
         if ln.rhyme:
@@ -469,7 +596,7 @@ def syllable_map(spec: SongSpec) -> str:
     for key in spec.performance_order:
         sec = spec.sections[key]
         counts = " / ".join(
-            " or ".join(describe_setting(p) for p in ln.prosody) if ln.prosody else
+            " or ".join(describe_setting(p, "beats" if p.rhythm else "none") for p in ln.prosody) if ln.prosody else
             f"{ln.split[0]}+{ln.split[1]}" if ln.split else str(ln.syllables) for ln in sec.lines
         )
         rows.append(f"{sec.label}: {counts}")

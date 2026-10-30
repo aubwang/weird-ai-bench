@@ -89,7 +89,7 @@ def test_rescore_populates_additive_metrics_without_changing_composite():
     assert {s: b["adherence"] for s, b in updated["scores"]["by_singer"].items()} == old_scores
     assert all(b["metrics"]["version"] == 1 for b in updated["scores"]["by_singer"].values())
     assert all("metrics" not in b for b in run["scores"]["by_singer"].values())
-    assert updated["scoring_version"] == run["scoring_version"] == 4
+    assert updated["scoring_version"] == run["scoring_version"] == 5
 
 
 def test_legacy_or_mixed_run_diagnostics_are_not_fabricated():

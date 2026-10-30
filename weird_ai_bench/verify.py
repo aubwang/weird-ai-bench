@@ -13,7 +13,7 @@ METER_GATES = ("syllables", "stress", "split")
 
 # Bump when a rule change can move a saved run's scores; `weird-ai-bench rescore`
 # brings old runs up to date. Runs saved without a version count as 1.
-SCORING_VERSION = 4
+SCORING_VERSION = 5
 
 # Unstressed words that lean on the word before them at a line end, so the pair
 # rhymes as one: "show me" / "lonely".
@@ -54,6 +54,9 @@ class LineReport:
     stress_hits: int = 0
     stress_issues: list[str] = field(default_factory=list)
     split_ok: bool | None = None
+    split_mode: str = "punctuation"
+    rest_boundary_positions: list[int] = field(default_factory=list)
+    rest_boundary_ok: bool | None = None  # Diagnostic only; never a score or retry gate.
     rhyme_group: str | None = None
     rhyme_level: str | None = None
     rhyme_with: int | None = None
@@ -98,8 +101,9 @@ def analyze_line(text: str, spec: LineSpec, overrides: dict | None = None,
             raise ValueError("prosody settings cannot use --tolerance")
         reports = []
         for setting in spec.prosody:
-            meter = LineSpec(setting.syllables, setting.stress, setting.split)
-            rep = _analyze_meter(text, toks, meter, 0, index)
+            meter = LineSpec(setting.syllables, setting.stress, setting.split, split_mode=setting.split_mode)
+            rests = list(setting.rhythm.rests()) if setting.rhythm else []
+            rep = _analyze_meter(text, toks, meter, 0, index, rests)
             rep.allowed_counts = sorted({p.syllables for p in spec.prosody})
             rep.setting_name = setting.name
             rep.note_spans = list(setting.note_spans)
@@ -121,8 +125,10 @@ def analyze_line(text: str, spec: LineSpec, overrides: dict | None = None,
 
 
 def _analyze_meter(text: str, toks: list[Token], spec: LineSpec,
-                   tolerance: int, index: int) -> LineReport:
+                   tolerance: int, index: int, rest_positions: list[int] | None = None) -> LineReport:
     rep = LineReport(index=index, text=text, target=spec.syllables)
+    rep.split_mode = spec.split_mode
+    rep.rest_boundary_positions = list(rest_positions or [])
     rep.guessed_words = [t.info.text for t in toks if t.info.guessed]
     fewer, more = slack_bounds(spec)
     rep.under, rep.over = max(tolerance, fewer), max(tolerance, more)
@@ -153,7 +159,8 @@ def _analyze_meter(text: str, toks: list[Token], spec: LineSpec,
                     if beat in required and not _strong(tok.info, pron, j):
                         weak_beats.append(beat)
                 npos = pos + pron.syllables
-                nhit = hit or (split_at is not None and tok.break_after and npos == split_at)
+                boundary = tok.word_end if spec.split_mode == "word" else tok.break_after
+                nhit = hit or (split_at is not None and boundary and npos == split_at)
                 key = (npos, nhit)
                 cand = (viol + len(weak_beats), path + [(ti, pron, weak_beats)])
                 if key not in nxt or cand[0] < nxt[key][0]:
@@ -183,6 +190,9 @@ def _analyze_meter(text: str, toks: list[Token], spec: LineSpec,
     (pos, hit), (viol, path) = min(states.items(), key=rank)
     rep.count = pos
     rep.syllables_ok = -rep.under <= pos - spec.syllables <= rep.over
+    if rep.rest_boundary_positions and rep.syllables_ok:
+        rep.rest_boundary_ok = _rest_boundary_reading(
+            toks, spec, rep.rest_boundary_positions, pos, hit, viol)
     if split_at is not None:
         rep.split_ok = hit and rep.syllables_ok
     if rep.syllables_ok or not required:
@@ -199,6 +209,34 @@ def _analyze_meter(text: str, toks: list[Token], spec: LineSpec,
     else:
         rep.stress_hits = 0  # meaningless when the count is off
     return rep
+
+
+def _rest_boundary_reading(toks: list[Token], spec: LineSpec, positions: list[int],
+                           target: int, split_hit: bool, stress_misses: int) -> bool:
+    """Check for one equally scoring reading that also respects all timed rests.
+
+    A separate pass keeps this diagnostic from changing pronunciation selection,
+    numeric scores, or retry decisions in the established meter algorithm.
+    """
+    bits = {p: 1 << i for i, p in enumerate(positions)}
+    required = set(spec.stress)
+    states = {(0, False, 0): 0}
+    for tok in toks:
+        nxt = {}
+        for (pos, hit, mask), misses in states.items():
+            for pron in tok.info.prons:
+                end = pos + pron.syllables
+                if end > target:
+                    continue
+                boundary = tok.word_end if spec.split_mode == "word" else tok.break_after
+                next_hit = hit or bool(spec.split and end == spec.split[0] and boundary)
+                next_mask = mask | (bits.get(end, 0) if tok.word_end else 0)
+                cost = misses + sum(pos + j + 1 in required and not _strong(tok.info, pron, j)
+                                    for j in range(pron.syllables))
+                key = (end, next_hit, next_mask)
+                nxt[key] = min(nxt.get(key, cost), cost)
+        states = nxt
+    return states.get((target, split_hit, (1 << len(bits)) - 1)) == stress_misses
 
 
 # ---------------------------------------------------------------- rhyme
@@ -470,7 +508,8 @@ class SectionReport:
             if not meter_passed and "stress" in gates and l.syllables_ok and not l.stress_ok:
                 out.append(f"{n} (\"{l.text}\"): " + "; ".join(l.stress_issues) + ".")
             if not meter_passed and "split" in gates and l.split_ok is False and l.syllables_ok:
-                out.append(f"{n} (\"{l.text}\") needs a pause (comma or dash) exactly at the split point.")
+                kind = "word boundary (punctuation optional)" if l.split_mode == "word" else "pause (comma or dash)"
+                out.append(f"{n} (\"{l.text}\") needs a {kind} exactly at the split point.")
             if "internal_rhyme" in gates and l.internal_ok is False:
                 need = l.internal_requirement or "an internal rhyme between two of its words"
                 out.append(f"{n} (\"{l.text}\") needs {need}.")

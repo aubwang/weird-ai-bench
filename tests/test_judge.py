@@ -27,7 +27,7 @@ def prompts(client: ScriptedClient) -> list[str]:
 
 
 def test_version_bumped():
-    assert JUDGE_VERSION == 5
+    assert JUDGE_VERSION == 7
 
 
 def test_redacts_persona_model_and_family_names():

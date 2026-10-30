@@ -1,0 +1,37 @@
+# Synthetic text and timing, unrelated to a recorded song.
+id: rhythm_example
+title: Evening Walk
+artist: Synthetic
+singers: 1
+generation_order: [verse]
+performance_order: [verse]
+sections:
+  verse:
+    singer: 1
+    craft_notes:
+      - The opening establishes a scene and the ending returns to a destination; an inventive transformation can preserve that movement without retaining the source words.
+    lines:
+      - reference: The sky is bright
+        prosody:
+          - name: held-second
+            note_spans: [1, 1, 1, 1]
+            stress: [2, 4]
+            rhythm:
+              tempo_bpm: 112
+              start_beat: 0
+              onsets: [0, 0.5, 2, 2.5]
+              durations: [[0.5], [1.5], [0.5], [1]]
+              reference_syllables: [The, sky, is, bright]
+      - reference: We walk back home
+        prosody:
+          - name: breath-after-two
+            note_spans: [1, 1, 1, 1]
+            stress: [2, 4]
+            split: [2, 2]
+            split_mode: word
+            rhythm:
+              tempo_bpm: 112
+              start_beat: 0
+              onsets: [0, 0.5, 2.5, 3]
+              durations: [[0.5], [1.5], [0.5], [1]]
+              reference_syllables: [We, walk, back, home]

@@ -8,11 +8,12 @@ import math
 import re
 
 from .llm import display_name, family
+from .craft import COHERENCE, PARODY_CRAFT, describe_craft
 from .orchestrate import render_sheet, result_scenario
 from .spec import describe_internal_rhyme, result_spec, syllable_map
 
 # Bump when a judge prompt changes; cached judgments from other versions are ignored.
-JUDGE_VERSION = 5
+JUDGE_VERSION = 7
 
 CRITERIA = {
     "singability": "Would the lines fit the original melody when sung? Natural word stress, "
@@ -29,6 +30,8 @@ CRITERIA = {
 def criteria(result: dict) -> dict[str, str]:
     """A solo song has no one to play off, so it isn't scored on interplay."""
     crit = dict(CRITERIA)
+    if result_spec(result).uses_craft_guidance and result["config"].get("guidance", "full") == "full":
+        crit.update(parody_craft=PARODY_CRAFT, coherence=COHERENCE)
     if len(result["config"]["models"]) == 1:
         del crit["interplay"]
     return crit
@@ -157,6 +160,10 @@ def _context(result: dict) -> str:
                 if line.internal_rhyme]
     internal_note = ("Required internal rhymes:\n" + "\n".join(internal) + "\n\n"
                      if internal else "")
+    craft_note = ""
+    if cfg.get("guidance", "full") == "full" and spec.uses_craft_guidance:
+        craft_note = redact_names(describe_craft(spec), result,
+                                  (spec.title, spec.artist, *characters)) + "\n\n"
     ref = spec.reference_text()
     ref_note = (
         "Here are the original song's lyrics, for judging parody craft. Lines copied from the "
@@ -167,10 +174,14 @@ def _context(result: dict) -> str:
     by = "one AI model" if n == 1 else f"{n} AI models"
     settings_note = ("Where a line lists settings, any one of them fits; a syllable held over "
                      "several notes is still one syllable. " if spec.uses_prosody else "")
+    if any(p.rhythm for sec in spec.sections.values() for line in sec.lines for p in line.prosody):
+        settings_note += ("Timing maps use quarter-note beats, zero-based onsets and one list of "
+                          "note durations per syllable; gaps are rests. They describe the target "
+                          "rhythm, not evidence of an actual sung performance. ")
     return (
         f'This is a parody written by {by} to the tune of "{spec.title}" '
         f"({spec.artist}). {chorus_note}\n\n{setup_note}\n\n{ref_note}{refrain_note}"
-        f"Target syllables per line:\n{syllable_map(spec)}\n\n{internal_note}"
+        f"{craft_note}Target syllables per line:\n{syllable_map(spec)}\n\n{internal_note}"
         f"You can't hear it, so judge singability from the text, the target counts, and the "
         f"automated check results listed after each song. The checker counts syllables and rhymes "
         f"from a pronouncing dictionary and can be wrong about how a word is sung, so weigh each "
@@ -208,7 +219,8 @@ def check_notes(result: dict) -> str:
             if line.get("syllables_ok"):
                 found.extend(f"line {line['index']}: {issue}" for issue in line.get("stress_issues", []))
                 if line.get("split_ok") is False:
-                    found.append(f"line {line['index']} is missing its pause")
+                    kind = "word boundary at its phrase break" if line.get("split_mode") == "word" else "pause"
+                    found.append(f"line {line['index']} is missing its {kind}")
             if line.get("guessed_words"):
                 found.append(f"line {line['index']} has guessed pronunciations: " +
                              ", ".join(line["guessed_words"]))
@@ -277,7 +289,11 @@ def scenario_terms(result: dict) -> tuple[str, ...]:
 
 def judge_inputs(result: dict) -> list:
     """Everything the judge sees about one song, for cache keys."""
-    return [_context(result), _sheet(result), list(criteria(result))]
+    crit = criteria(result)
+    # Craft pairwise prompts include the definitions, not just their names.
+    # Preserve the old representation for legacy prompts.
+    definitions = crit if crit.get("parody_craft") != CRITERIA["parody_craft"] else list(crit)
+    return [_context(result), _sheet(result), definitions]
 
 
 def _sheet(result: dict) -> str:
@@ -325,6 +341,18 @@ def pairwise(a: dict, b: dict, client, judge_model: str) -> dict:
     for first, second, flip in ((a, b, False), (b, a, True)):
         ctx1, ctx2 = _context(first), _context(second)
         ask = f"Which is the better parody overall, weighing {weigh}?\n\n"
+        crit1, crit2 = criteria(first), criteria(second)
+        if any(c.get("parody_craft") != CRITERIA["parody_craft"] for c in (crit1, crit2)):
+            shared = [k for k in crit1 if k in crit2]
+            definitions = lambda c: "\n".join(f"- {k}: {c[k]}" for k in shared)
+            if all(crit1[k] == crit2[k] for k in shared):
+                ask += "Judge using these definitions:\n" + definitions(crit1) + "\n\n"
+            else:
+                # --mix may compare writers given different expectations. Keep
+                # each definition attached to its own song in both orientations.
+                ask += ("Each song had its own stated criteria.\n"
+                        "SONG 1 criteria:\n" + definitions(crit1) + "\n\n"
+                        "SONG 2 criteria:\n" + definitions(crit2) + "\n\n")
         if ctx1 == ctx2:
             prompt = (f"{ctx1}\n\nHere are two songs written under the same setup. {ask}"
                       f"SONG 1:\n\n{_sheet(first)}\n\nSONG 2:\n\n{_sheet(second)}\n\n")

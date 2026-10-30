@@ -271,6 +271,7 @@ BREAK_CHARS = ",;:—–"
 class Token:
     info: WordInfo
     break_after: bool  # punctuation pause after this word
+    word_end: bool = True  # False within one hyphenated spelling or expanded number.
 
 
 def strip_adlibs(line: str) -> str:
@@ -319,7 +320,7 @@ def tokenize(line: str, overrides: dict[str, int] | None = None) -> list[Token]:
             info = word_info(w, overrides)
             if not info.norm:
                 continue
-            tokens.append(Token(info, brk and i == len(words) - 1))
+            tokens.append(Token(info, brk and i == len(words) - 1, i == len(words) - 1))
     return tokens
 
 
