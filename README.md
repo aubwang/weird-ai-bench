@@ -218,6 +218,8 @@ Start from [`two_voices.yaml`](weird_ai_bench/data/specs/two_voices.yaml) as an 
 
 ## Run it yourself
 
+For new craft-guided experiments, see the [working benchmark protocol](docs/benchmark-protocol.md), including the writer setup, judging rubric and separate mechanical diagnostics.
+
 Start with Python 3.10 or newer. These commands check the bundled example, preview a run and execute the tests without calling a model API.
 
 ```sh

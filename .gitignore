@@ -4,6 +4,7 @@ __pycache__/
 runs/
 .pytest_cache/
 songs/local/
+.env
 
 presets/local/
 scenarios/local/

@@ -55,7 +55,8 @@ def group_key(run: dict) -> tuple:
     generation_version = run.get("generation_scoring_version", evaluation_version) if strict else None
     return (template, scenario, c["names"], c["chorus"], c["track"], c.get("guidance", "full"),
             reference, supplied, c.get("tolerance", 0), retries, gates,
-            c.get("temperature"), c.get("effort"), evaluation_version, generation_version)
+            c.get("temperature"), c.get("effort"), evaluation_version, generation_version,
+            c.get("rhythm", "none"))
 
 
 def singer_weights(run: dict) -> dict[str, float]:
@@ -120,7 +121,7 @@ def gate_stats(runs: list[dict]) -> list[dict]:
         # A failed song's unwritten turns count as turns that didn't pass.
         expected = expected_turns(r) if "failed" in r else {}
         for model, singers in slots.items():
-            a = acc[(spec, model, cfg["track"], cfg.get("guidance", "full"))]
+            a = acc[(spec, model, cfg["track"], cfg.get("guidance", "full"), cfg.get("rhythm", "none"))]
             a["songs"] += 1
             a["failed"] += "failed" in r
             for s in singers:
@@ -135,9 +136,9 @@ def gate_stats(runs: list[dict]) -> list[dict]:
             if overall is not None:
                 a["judge"].append(overall)
     rows = []
-    for (spec, model, track, guidance), a in sorted(acc.items(), key=lambda kv: tuple(map(str, kv[0]))):
+    for (spec, model, track, guidance, rhythm), a in sorted(acc.items(), key=lambda kv: tuple(map(str, kv[0]))):
         rows.append({
-            "spec": spec, "model": model, "track": track, "guidance": guidance,
+            "spec": spec, "model": model, "track": track, "guidance": guidance, "rhythm": rhythm,
             "songs": a["songs"], "failed": a["failed"],
             "adherence": _mean(a["adherence"]),
             "first_try_pass": a["first"] / a["turns"] if a["turns"] else None,

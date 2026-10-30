@@ -19,7 +19,7 @@ from .prompts import (
     retry_message, section_task, system_prompt,
 )
 from .scenario import Scenario, load_scenario, scenario_from_dict
-from .spec import SongSpec, format_lyric, group_label, load_preset, load_spec, result_spec
+from .spec import RHYTHM_FORMATS, SongSpec, format_lyric, group_label, load_preset, load_spec, result_spec
 from .verify import (
     GATES, SCORING_VERSION, LineReport, SectionReport, originality, rhyme_credit, verify_section,
 )
@@ -51,6 +51,7 @@ class RunConfig:
     temperature: float | None = None
     effort: str | None = None
     seed: int | None = None
+    rhythm: str = "none"
 
     def validate(self, spec: SongSpec | None = None, scenario: Scenario | None = None) -> None:
         """Check the settings; with a spec and scenario, also check they fit this song."""
@@ -60,12 +61,23 @@ class RunConfig:
             raise ConfigError("A template with prosody settings cannot use --tolerance.")
         self.chorus = str(self.chorus)
         for name, val, allowed in (("names", self.names, NAMES), ("track", self.track, TRACKS),
-                                   ("guidance", self.guidance, GUIDANCE)):
+                                   ("guidance", self.guidance, GUIDANCE),
+                                   ("rhythm", self.rhythm, RHYTHM_FORMATS)):
             if val not in allowed:
                 raise ConfigError(f"{name} must be one of {', '.join(allowed)}; got {val!r}")
         if self.guidance == "none" and self.track != "freeform":
             # Retry feedback names the failed checks, which would hand back the song map.
             raise ConfigError("guidance=none is one-shot; use --track freeform.")
+        if self.rhythm != "none":
+            if self.guidance == "none":
+                raise ConfigError("rhythm guidance needs --guidance full; use --rhythm none for unguided runs.")
+            if spec is not None:
+                for section in spec.sections.values():
+                    for line in section.lines:
+                        if not line.prosody or any(p.rhythm is None for p in line.prosody):
+                            raise ConfigError("rhythm guidance needs timing data in every prosody setting.")
+                        if self.rhythm == "aligned" and any(not p.rhythm.reference_syllables for p in line.prosody):
+                            raise ConfigError("aligned rhythm needs reference syllables in every setting.")
         if self.chorus not in CHORUS and not self.chorus.isdigit():
             raise ConfigError(f"chorus must be one of {', '.join(CHORUS)} or a singer number; "
                               f"got {self.chorus!r}")

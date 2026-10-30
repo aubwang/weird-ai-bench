@@ -90,6 +90,7 @@ the result.
 | `slack: 2` | Syllables either side of the target that still fit, for looser stretches of melody; prompts show the range. `slack: [0, 2]` sets fewer and more separately |
 | `stress: [2, 4]` | Syllables that must be stressed, counted from 1 (syllables, not notes) |
 | `split: [4, 4]` | Pause at the syllable boundary between the two halves |
+| `split_mode: word` | Require a word boundary at `split`, with punctuation optional; the default `punctuation` retains the original comma/dash rule |
 | `rhyme: A` | End word belongs to group A within this section |
 | `internal_rhyme: true` | Two words somewhere within the line must rhyme |
 | `internal_rhyme: {word_syllables: 3, end_word: true}` | Two different three-syllable words or acronyms must rhyme on their ending sounds; one must end the line |
@@ -171,12 +172,91 @@ use the best reading across all three meter checks, whatever the gates.
 `meter_joint_pass` in a section's report says whether one reading passed all three.
 
 Settings are your annotation, checked against the recording or score; the checker
-can't hear the song. They don't cover rests, pickups, or two syllables squeezed
-onto one note. To try the example without an API key:
+can't hear the song. Optional timing maps below can describe rests and pickups.
+The settings still cannot express two syllables squeezed onto one original note
+without changing their common note-count convention. To try the example without an API key:
 
 ```sh
 weird-ai-bench check examples/melisma.txt --spec examples/melisma.yaml
 ```
+
+## Optional rhythm guidance
+
+Timing is opt-in prompt context, not an audio-performance score. See
+[`examples/rhythm.yaml`](../examples/rhythm.yaml) for a complete synthetic example.
+Add `rhythm` inside a prosody setting:
+
+```yaml
+reference: We walk back home
+prosody:
+  - name: breath-after-two
+    note_spans: [1, 1, 1, 1]
+    stress: [2, 4]
+    split: [2, 2]
+    split_mode: word
+    rhythm:
+      tempo_bpm: 112
+      beats_per_bar: 4
+      start_beat: 0
+      onsets: [0, 0.5, 2.5, 3]
+      durations: [[0.5], [1.5], [0.5], [1]]
+      reference_syllables: [We, walk, back, home]
+```
+
+All times use quarter-note beats. `onsets` are relative to the first syllable,
+starting at zero; `start_beat` gives that syllable's zero-based position within
+the bar, so pickups retain their phase. `tempo_bpm` is the quarter-note tempo.
+Each nested duration list describes the distinct note attacks on one syllable.
+Combine tied note segments into one duration; keep a melisma's separate attacks
+in one list. The lengths of these lists must equal `note_spans`. A positive gap
+before the next syllable is a rest. Notes within a syllable are contiguous.
+Changing tempos or meter within a line is not supported by this representation.
+
+Choose a writer prompt format with `--rhythm`:
+
+- `none` (default): existing count/stress/rhyme map; omit the timing.
+- `beats`: exact syllable onsets, note durations, bar position and tempo.
+- `grid`: the same timing as compact symbols, with an explicit legend. `q`,
+  `s`, `M`, `L`, `H` mean 0.25, 0.5, 1, 1.5 and 2 beats; other lengths stay
+  numeric. `+` connects note attacks on one syllable, `|Nb|` is an N-beat rest,
+  and `>` marks an offbeat start held across a whole-beat boundary. It does not
+  automatically add a stress requirement.
+- `aligned`: exact beats plus the source syllable labels, indexed by position.
+  The source is still context, not words the model must reuse.
+
+Every setting needs timing for a timing-enabled run; `aligned` also needs
+source syllable labels for every setting. Timing cannot be combined with
+`--guidance none`. Preview without model calls:
+
+```sh
+weird-ai-bench spec --spec examples/rhythm.yaml --rhythm grid
+weird-ai-bench run --model provider/model --scenario none \
+  --spec examples/rhythm.yaml --rhythm beats --track freeform --dry-run
+```
+
+The four writer formats keep the same scoring rules and accepted settings.
+Their saved configs, leaderboard groups and stats remain separate. For templates
+with timing, judges always receive the exact beat map, independently of which
+format the writer received. This holds judge information constant across a
+prompt experiment; it does not validate a text judge as a listening evaluator.
+
+`split_mode: word` checks that a word ends at the specified syllable boundary
+under the same pronunciation used for count and stress. A comma is optional.
+The default remains `punctuation` for existing templates and snapshots. Within
+prosody settings, put `split_mode` beside that setting's `split`; for ordinary
+lines, put it beside the line's `split`.
+
+Other timed rests get a `rest_boundary_ok` diagnostic. It asks whether one
+equally scoring pronunciation can put word boundaries at all those rests. It
+does not affect retries, numeric scores or judge check notes. Neither timing
+nor long notes automatically create new hard stress rules or accepted syllable
+counts. Review those choices by singing candidate lines before adopting them.
+
+Scoring version 5 adds the explicit word-boundary mode; legacy punctuation
+templates retain their behavior. Judge version 6 supports timing context.
+Existing saved runs are not rewritten. Use `rescore` before combining scoring
+versions, and keep timing experiments separate from published rankings until
+their checks have been calibrated against listening judgments.
 
 ## Prewritten sections
 
@@ -231,3 +311,46 @@ Remove `--dry-run` to call the configured endpoint. A preset containing every
 section produces verification and saved output without generation calls.
 The models do not hear a recording: reference text cannot replace checking the
 pacing annotations against the melody yourself.
+# Soft parody-craft guidance
+
+A section may include `craft_notes`, a list of nonempty strings describing
+recognizable devices in the source: a rhetorical turn, a returning hook, a
+contrast, or a memorable sound pattern. Use source structure only; do not supply
+new topics, jokes, or model answers. For example, synthetic material may use:
+
+```yaml
+craft_notes:
+  - The opening establishes a scene and the ending returns to a destination; transform that movement without retaining the source words.
+```
+
+With full guidance, writers and judges receive the same notes. A template with
+notes also opts into expanded qualitative criteria for parody craft and
+coherence: recognizable transformations matter, and a consistent comic argument
+can hold a song together without a continuous story. Exact wording and every
+listed device are not required, but enough other recognizable features must
+remain for the lyrics to work as a transformation of the source. Funny lyrics
+that merely fit the same melody can earn humor credit while earning little
+parody-craft credit. These notes do not add automated internal-rhyme
+checks, copying exceptions, or other hard gates. Existing musical constraints
+still apply.
+
+With `guidance=none`, both the notes and expanded criteria are omitted from
+writers and judges; the legacy qualitative criteria apply. Templates without
+notes retain their earlier prompt criteria. Notes are saved in template
+snapshots, affect content grouping, and enter judge-input cache hashes. Judge
+version is 7; automated scoring remains version 5. Preserve prior runs and
+ratings instead of silently replacing their snapshots or expectations. An
+exploratory rejudgment under changed expectations must be labelled as such; a
+fresh run is needed to measure responses to the new writer guidance.
+
+Version 7 invalidates version-6 cached judgments, including legacy pairs whose
+prompt text is unchanged. Merely opening saved reports makes no calls, but a
+future live `leaderboard` invocation can pay to rejudge those pairs. Keep old
+reports/caches intact. Craft pairwise prompts include the full criterion
+definitions in both orders, and those definitions enter the craft input hash.
+For explicitly mixed comparisons, each song retains its own stated criteria.
+
+Author calibration examples separately from writer inputs. A short callback
+is not automatically copied text, but the current copying heuristic can still
+flag heavily overlapping lines. Audit examples before changing its threshold;
+`craft_notes` never whitelist phrases.

@@ -11,6 +11,7 @@ from __future__ import annotations
 import re
 from html import escape
 
+from .craft import COHERENCE, PARODY_CRAFT, describe_craft
 from .scenario import Scenario
 from .spec import SectionSpec, SongSpec, describe_line, describe_section, group_label
 
@@ -47,7 +48,7 @@ def cast_text(spec: SongSpec, cfg, singer: int) -> str:
     return f"{who} {others} own parts separately. Write only the part you're asked for."
 
 
-def judging_text(spec: SongSpec) -> str:
+def judging_text(spec: SongSpec, guidance: str = "full") -> str:
     """What the judge weighs, so writers aren't scored on goals they were never told.
 
     It names the criteria only. It suggests no topics or jokes.
@@ -56,14 +57,18 @@ def judging_text(spec: SongSpec) -> str:
             "how cleverly it echoes the original song", "how well it holds together"]
     if spec.singers > 1:
         crit.append("how the singers' parts respond to each other")
-    return ("The finished song will be compared with other parodies of the same song. A judge "
+    text = ("The finished song will be compared with other parodies of the same song. A judge "
             "will weigh " + ", ".join(crit[:-1]) + ", and " + crit[-1] + ".")
+    if spec.uses_craft_guidance and guidance == "full":
+        text += "\nParody craft: " + PARODY_CRAFT + "\nCoherence: " + COHERENCE
+    return text
 
 
 def system_prompt(spec: SongSpec, cfg, scenario: Scenario, singer: int,
                   reference_lyrics: str | None = None) -> str:
     parts = [p for p in (scenario.render(spec, singer), cast_text(spec, cfg, singer),
-                         judging_text(spec)) if p]
+                         judging_text(spec, getattr(cfg, "guidance", "full")),
+                         describe_craft(spec) if guided(cfg) else "") if p]
     fmt = ("Put the lyrics between <lyrics> and </lyrics>, one sung line per line, with exactly "
            "the number of lines asked for. Inside the tags, write only the lyrics: no numbering"
            + (", labels, syllable counts, or stress marks." if guided(cfg) else " or labels.")
@@ -92,6 +97,21 @@ def system_prompt(spec: SongSpec, cfg, scenario: Scenario, singer: int,
         ]
         for w, n in spec.syllable_overrides.items():
             rules.append(f'Count "{w}" as {n} syllable{"s" if n != 1 else ""}.')
+        rhythm = getattr(cfg, "rhythm", "none")
+        if rhythm != "none":
+            rules.append("The rhythm map uses quarter-note beats, with zero-based onsets. "
+                         "Each position represents one sung syllable. Several note durations at a "
+                         "position mean that syllable continues across those notes. Leave gaps silent "
+                         "and end a word before an internal rest. The rhythm is context for choosing "
+                         "singable words; write lyrics only.")
+            if rhythm == "grid":
+                rules.append("Rhythm grid: q=0.25 beat, s=0.5, M=1, L=1.5, H=2; other lengths "
+                             "are written as a number followed by b. A + joins notes on one syllable. "
+                             "> marks an offbeat start held across a whole-beat boundary, not a "
+                             "mandatory lexical stress. |Nb| is a rest of N beats.")
+            elif rhythm == "aligned":
+                rules.append("The source syllable labels show how the reference fits the timing; "
+                             "replace them with your own words, rather than copying the labels.")
     else:
         rules = [
             fmt,
@@ -146,7 +166,7 @@ def _sung_by(spec: SongSpec, sec: SectionSpec) -> str:
 
 def _map(cfg, sec: SectionSpec) -> str:
     """The section's song map, or nothing when the run gives no guidance."""
-    return f"{describe_section(sec)}\n\n" if guided(cfg) else ""
+    return f"{describe_section(sec, getattr(cfg, 'rhythm', 'none'))}\n\n" if guided(cfg) else ""
 
 
 def chorus_task(spec: SongSpec, cfg, sec: SectionSpec, so_far: str = "") -> str:
@@ -188,7 +208,7 @@ def trade_line_task(spec: SongSpec, cfg, sec: SectionSpec, idx: int, so_far: str
         f"The song so far:\n\n{so_far}\n\n"
         f"Now {sec.label}. {sec.note}\nOrder: {order}.\n\n"
         f"Write {sec.label} line {idx + 1} (one line).\n"
-        f"{describe_line(ln, idx + 1, sec.rhymes)}{rhyme_note}"
+        f"{describe_line(ln, idx + 1, sec.rhymes, getattr(cfg, 'rhythm', 'none'))}{rhyme_note}"
     )
 
 

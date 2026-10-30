@@ -20,7 +20,7 @@ from .orchestrate import (
 )
 from .prompts import chorus_task, render_song_so_far, section_task, trade_line_task
 from .scenario import bundled_scenarios, load_scenario
-from .spec import bundled_specs, describe_section, load_spec, slack_hints
+from .spec import RHYTHM_FORMATS, bundled_specs, describe_section, load_spec, slack_hints
 from .verify import GATES, verify_section
 
 
@@ -40,6 +40,7 @@ def _config(args, models=None, scenario=None, track=None) -> RunConfig:
         personas=list(getattr(args, "persona", None) or []),
         chorus=args.chorus, presets=args.preset, track=track or args.track,
         guidance=args.guidance,
+        rhythm=args.rhythm,
         max_retries=args.retries, tolerance=args.tolerance,
         gates=[g.strip() for g in args.gates.split(",") if g.strip()],
         spec=args.spec,
@@ -56,6 +57,8 @@ def _common(p: argparse.ArgumentParser, single: bool = True) -> None:
     p.add_argument("--guidance", choices=GUIDANCE, default="full",
                    help="none: prompts give only the reference lyrics and line counts, no song "
                         "map; needs --track freeform (matrix: --tracks freeform)")
+    p.add_argument("--rhythm", choices=RHYTHM_FORMATS, default="none",
+                   help="optional timing prompt format; needs a fully timed prosody template and guidance=full")
     p.add_argument("--chorus", default="auto",
                    help=f"{', '.join(CHORUS)}, or the singer number that writes it. auto: a preset "
                         "chorus if supplied, otherwise the chorus's first singer; original: the "
@@ -212,7 +215,7 @@ def cmd_matrix(args) -> int:
             per = lambda k: ";".join("" if x[k] is None else f"{x[k]:.3f}" for x in b)
             row = {"id": r["id"], "spec": r["spec"], "models": ";".join(c.models),
                    "scenario": r["scenario_snapshot"]["id"], "names": c.names,
-                   "chorus": r["config"]["chorus"], "track": c.track, "guidance": c.guidance,
+                   "chorus": r["config"]["chorus"], "track": c.track, "guidance": c.guidance, "rhythm": c.rhythm,
                    "adherence": per("adherence"), "first_try": per("first_try_pass_rate"),
                    "strict_pass": r["scores"]["strict_pass"], "failed": "failed" in r,
                    "cost": r["usage"]["cost"],
@@ -289,6 +292,8 @@ def cmd_check(args) -> int:
                 marks.append(f"rhyme {l.rhyme_group}: {l.rhyme_level}" + ("" if l.rhyme_ok else " ✗"))
             if l.split_ok is not None and l.syllables_ok:
                 marks.append("split ok" if l.split_ok else "split ✗")
+            if l.rest_boundary_ok is False:
+                marks.append("diagnostic: a word crosses a timed rest")
             if l.internal_ok is not None:
                 marks.append("internal rhyme ok" if l.internal_ok else "internal rhyme ✗")
             if l.copied:
@@ -383,10 +388,10 @@ def cmd_stats(args) -> int:
         return 1
     f = lambda v: "–" if v is None else f"{v:.0%}"
     num = lambda v: "–" if v is None else f"{v:.1f}"
-    print(f"{'spec':<16} {'model':<36} {'track':<9} {'guidance':<8} {'songs':>5} {'failed':>6} "
+    print(f"{'spec':<16} {'model':<36} {'track':<9} {'guidance':<8} {'rhythm':<8} {'songs':>5} {'failed':>6} "
           f"{'adher.':>7} {'1st-try':>8} {'final':>6} {'retries':>8} {'judge':>6}")
     for r in rows:
-        print(f"{r['spec']:<16} {r['model']:<36} {r['track']:<9} {r['guidance']:<8} {r['songs']:>5} "
+        print(f"{r['spec']:<16} {r['model']:<36} {r['track']:<9} {r['guidance']:<8} {r['rhythm']:<8} {r['songs']:>5} "
               f"{r['failed']:>6} {f(r['adherence']):>7} {f(r['first_try_pass']):>8} "
               f"{f(r['final_pass']):>6} {num(r['retries_per_song']):>8} {num(r['judge_overall']):>6}")
     if args.csv:
@@ -474,7 +479,7 @@ def cmd_spec(args) -> int:
     spec = load_spec(args.spec)
     print(f'"{spec.title}" ({spec.artist})\n')
     for key in spec.generation_order:
-        print(f"[{key}] " + describe_section(spec.sections[key]) + "\n")
+        print(f"[{key}] " + describe_section(spec.sections[key], args.rhythm) + "\n")
     for hint in slack_hints(spec):
         print(f"hint: {hint}")
     return 0
@@ -580,6 +585,7 @@ def main(argv=None) -> int:
     p.set_defaults(func=cmd_draft)
 
     p = sub.add_parser("spec", help="show the song map")
+    p.add_argument("--rhythm", choices=RHYTHM_FORMATS, default="none")
     p.add_argument("--spec", default="two_voices")
     p.set_defaults(func=cmd_spec)
 
