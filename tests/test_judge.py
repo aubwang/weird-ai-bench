@@ -6,7 +6,7 @@ import pytest
 
 from weird_ai_bench.judge import (JUDGE_VERSION, _context, _extract_json, _score, _sheet, check_notes, family_overlap,
                              pairwise, redact_names, rubric, same_family_warning)
-from weird_ai_bench.llm import ScriptedClient
+from weird_ai_bench.llm import Completion, LLMError, ScriptedClient
 from weird_ai_bench.orchestrate import RunConfig, Song, rescore
 
 CHORUS = "<lyrics>We watch the light\nWe walk back home</lyrics>"
@@ -27,7 +27,7 @@ def prompts(client: ScriptedClient) -> list[str]:
 
 
 def test_version_bumped():
-    assert JUDGE_VERSION == 7
+    assert JUDGE_VERSION == 8
 
 
 def test_redacts_persona_model_and_family_names():
@@ -151,6 +151,58 @@ def test_extract_json_ignores_braces_in_prose():
     assert _extract_json('```json\n{"x": 1}\n```') == {"x": 1}
     with pytest.raises(ValueError):
         _extract_json("no json {here} at all")
+
+
+@pytest.mark.parametrize("reply", ["not JSON", "{}", '{"winner": null}',
+                                  '{"winner": true}', '{"winner": 1.0}',
+                                  '{"winner": "1"}', '{"winner": "Song 1"}',
+                                  '{"winner": 3}'])
+def test_invalid_pairwise_verdict_is_unresolved(reply):
+    a, b = make(), make()
+    out = pairwise(a, b, ScriptedClient([reply, '{"winner": 2}']), "j/judge")
+    assert out["status"] == "unresolved"
+    assert out["winner"] is None and out["score_a"] is None and out["consistent"] is None
+    assert out["votes"] == [None, "a"]
+    assert out["responses"][0]["raw_text"] == reply
+    assert out["responses"][0]["error"]
+    assert out["responses"][1]["order"] == [b["id"], a["id"]]
+
+
+def test_pairwise_keeps_explanations_usage_and_explicit_ties():
+    class Client:
+        def complete(self, model, messages):
+            return Completion('{"winner": "TIE", "reason": "Both sustain the premise."}',
+                              model, prompt_tokens=100, completion_tokens=20, cost=0.03)
+
+    out = pairwise(make(), make(), Client(), "j/judge")
+    assert out["status"] == "resolved" and out["winner"] == "tie"
+    assert out["votes"] == ["tie", "tie"] and out["consistent"] is True
+    assert out["known_cost"] == 0.06 and out["missing_cost_calls"] == 0
+    for response in out["responses"]:
+        assert response["reason"] == "Both sustain the premise."
+        assert response["prompt_tokens"] == 100 and response["completion_tokens"] == 20
+
+
+@pytest.mark.parametrize("failing_call", [1, 2])
+def test_pairwise_api_failure_stops_calls_and_preserves_completed_order(failing_call):
+    class Client:
+        calls = 0
+
+        def complete(self, model, messages):
+            self.calls += 1
+            if self.calls == failing_call:
+                raise LLMError("service unavailable")
+            return Completion('{"winner": 1}', model, cost=0.02)
+
+    client = Client()
+    out = pairwise(make(), make(), client, "j/judge")
+    assert client.calls == failing_call
+    assert out["status"] == "unresolved"
+    assert out["votes"] == ([None, None] if failing_call == 1 else ["a", None])
+    assert out["responses"][failing_call - 1]["error"] == "service unavailable"
+    assert out["known_cost"] == (failing_call - 1) * 0.02 and out["missing_cost_calls"] == 1
+    assert out["responses"][1]["attempted"] == (failing_call == 2)
+    assert out["responses"][0].keys() == out["responses"][1].keys()
 
 
 def test_rubric_accepts_fractions_and_skips_bad_scores():

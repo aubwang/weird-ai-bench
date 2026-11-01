@@ -428,6 +428,15 @@ def cmd_leaderboard(args) -> int:
     agree = ("" if lb.get("judge_agreement") is None
              else f" · judges agreed on {lb['judge_agreement']:.0%} of shared pairs")
     print(f"Judge: {lb['judge']} · {lb['pairs']} pairwise comparisons{forfeits}{flips}{agree}\n")
+    print(f"Scheduled: {lb['scheduled_pairs']} pairs · skipped: {lb['skipped_pairs']} pairs · "
+          f"unresolved: {lb['unresolved_judgments']} judge-pair judgments")
+    for judge, summary in lb["by_judge"].items():
+        print(f"  {judge}: {summary['resolved']}/{summary['scheduled']} resolved · "
+              f"{summary['ties']} explicit ties · {summary['order_flips']} order flips · "
+              f"{summary['unattempted']} unattempted · {summary['missing_cached']} missing cached")
+    cost = lb["new_judging_cost"]
+    print(f"New judging calls: ${cost['known_cost']:.4f} known cost · "
+          f"{cost['missing_cost_calls']} calls without cost data\n")
     if not lb["table"]:
         return 1
     ci = lb["table"][0]["elo_lo"] is not None
@@ -564,7 +573,8 @@ def main(argv=None) -> int:
                    help="judge model id; repeat for a panel, where each pair skips judges "
                         "from its singers' families")
     p.add_argument("--max-pairs", type=int, default=200)
-    p.add_argument("--json-out", help="save leaderboard data for plotting")
+    p.add_argument("--json-out", help="save leaderboard data, including raw judge replies that may quote "
+                   "private lyrics; keep this export local")
     p.add_argument("--mix", action="store_true", help="compare across settings, not just within")
     p.add_argument("--bootstrap", type=int, default=200,
                    help="bootstrap resamples for the 95%% intervals (0 turns them off)")

@@ -11,7 +11,7 @@ import pytest
 from weird_ai_bench import leaderboard as lb
 from weird_ai_bench.judge import JUDGE_VERSION
 from weird_ai_bench.leaderboard import fit_additive_bt, gate_stats, group_key, leaderboard, singer_weights
-from weird_ai_bench.llm import ScriptedClient
+from weird_ai_bench.llm import Completion, LLMError, ScriptedClient
 from weird_ai_bench.orchestrate import RunConfig, Song, rescore
 from weird_ai_bench.spec import load_spec
 
@@ -55,7 +55,7 @@ class Judge:
 
     def complete(self, model, messages, **kw):
         self.calls += 1
-        return type("C", (), {"text": json.dumps({"winner": self.winner}), "cost": 0.0})()
+        return Completion(text=json.dumps({"winner": self.winner}), model=model, cost=0.0)
 
 
 def grad(comps, theta, prior_sd=1.0):
@@ -246,6 +246,8 @@ def test_forfeits_never_call_the_judge(tmp_path):
     cache = tmp_path / "c.jsonl"
     out = leaderboard(runs, judge, "j/judge", cache, bootstrap=0)
     assert judge.calls == 0 and out["forfeits"] == 3 and out["pairs"] == 3
+    assert out["scheduled_pairs"] == 3 and out["skipped_pairs"] == 0
+    assert out["by_judge"]["j/judge"]["scheduled"] == 0
     assert {r["judge"] for r in out["records"]} == {"forfeit"}
     assert cache.read_text() == ""
     scores = {frozenset((r["a"], r["b"])): r["score_a"] if r["a"] < r["b"] else 1 - r["score_a"]
@@ -271,6 +273,85 @@ def test_judgments_are_cached_and_ignored_across_judge_versions(tmp_path):
     leaderboard(runs, judge, "j/judge", cache, bootstrap=0)
     assert judge.calls == 4
     assert len(cache.read_text().splitlines()) == 2 * len(stale)  # old lines are kept
+
+
+def test_unresolved_judgments_are_saved_excluded_and_retried(tmp_path):
+    runs = [fake_run("r1", ["a/x", "a/x"]), fake_run("r2", ["b/y", "b/y"])]
+    cache = tmp_path / "c.jsonl"
+    client = ScriptedClient(['{}', '{"winner": 2}'])
+    out = leaderboard(runs, client, "j/judge", cache, bootstrap=0)
+    assert out["scheduled_pairs"] == 1 and out["pairs"] == 0 and out["skipped_pairs"] == 1
+    assert out["unresolved_judgments"] == 1 and out["table"] == []
+    assert out["flip_rate"] is None
+    assert out["by_judge"]["j/judge"]["unresolved"] == 1
+    assert out["by_judge"]["j/judge"]["ties"] == 0
+    original = cache.read_text()
+    assert json.loads(original)["responses"][0]["raw_text"] == '{}'
+    cached = leaderboard(runs, None, "j/judge", cache, bootstrap=0, cached_only=True)
+    assert cached["unresolved_judgments"] == 1 and cached["pairs"] == 0
+    assert cache.read_text() == original
+    failed_retry = leaderboard(runs, ScriptedClient(['{}', '{}']), "j/judge", cache, bootstrap=0)
+    assert failed_retry["pairs"] == 0 and failed_retry["unresolved_judgments"] == 1
+    assert len(cache.read_text().splitlines()) == 2
+    client = ScriptedClient(['{"winner": 1}', '{"winner": 2}'])
+    retry = leaderboard(runs, client, "j/judge", cache, bootstrap=0)
+    assert len(client.calls) == 2 and retry["pairs"] == 1 and retry["unresolved_judgments"] == 0
+    assert cache.read_text().startswith(original) and len(cache.read_text().splitlines()) == 3
+    cached = leaderboard(runs, None, "j/judge", cache, bootstrap=0, cached_only=True)
+    assert cached["pairs"] == 1 and cached["new_judging_cost"]["known_cost"] == 0
+
+
+def test_panel_continues_after_api_failure_and_reports_cost(tmp_path):
+    runs = [fake_run(f"r{i}", [f"m{i}/x"] * 2) for i in range(3)]
+
+    class Client:
+        def complete(self, model, messages):
+            if model == "j/broken":
+                raise LLMError("service unavailable")
+            return Completion('{"winner": "tie", "reason": "Equally strong."}', model, cost=0.02)
+
+    out = leaderboard(runs, Client(), ["j/broken", "k/working"], tmp_path / "c.jsonl", bootstrap=0)
+    assert out["pairs"] == 3 and out["unresolved_judgments"] == 1
+    assert out["flip_rate"] == 0 and out["judge_agreement"] is None
+    assert out["by_judge"]["j/broken"]["resolved"] == 0
+    assert out["by_judge"]["k/working"]["ties"] == 3
+    assert out["by_judge"]["j/broken"]["unattempted"] == 2
+    assert out["new_judging_cost"]["known_cost"] == pytest.approx(0.12)
+    assert out["new_judging_cost"]["missing_cost_calls"] == 1
+    assert len(out["records"]) == 4
+    assert all(row["win_rate"] == 0.5 for row in out["table"])
+
+
+def test_persistent_api_failure_stops_judge_and_reports_missing_cache(tmp_path):
+    runs = [fake_run(f"r{i}", [f"m{i}/x"] * 2) for i in range(4)]
+    cache = tmp_path / "c.jsonl"
+
+    class Client:
+        calls = 0
+
+        def complete(self, model, messages):
+            self.calls += 1
+            raise LLMError("invalid credentials")
+
+    client = Client()
+    out = leaderboard(runs, client, "j/judge", cache, bootstrap=0)
+    assert client.calls == 1 and out["scheduled_pairs"] == 6
+    assert out["pairs"] == 0 and out["skipped_pairs"] == 6
+    assert out["by_judge"]["j/judge"]["unattempted"] == 5
+    assert out["by_judge"]["j/judge"]["unresolved"] == 1
+    assert len(cache.read_text().splitlines()) == 1
+    out = leaderboard(runs, None, "j/judge", cache, bootstrap=0, cached_only=True)
+    assert out["by_judge"]["j/judge"]["missing_cached"] == 5
+    assert out["by_judge"]["j/judge"]["scheduled"] == 6
+    assert out["by_judge"]["j/judge"]["unresolved"] == 1
+
+
+def test_per_judge_explicit_ties_do_not_include_order_flips(tmp_path):
+    runs = [fake_run("r1", ["a/x"] * 2), fake_run("r2", ["b/y"] * 2)]
+    out = leaderboard(runs, Judge(), "j/judge", tmp_path / "c.jsonl", bootstrap=0)
+    assert out["by_judge"]["j/judge"]["ties"] == 0
+    assert out["by_judge"]["j/judge"]["order_flips"] == 1
+    assert out["records"][0]["winner"] == "tie"
 
 
 def test_cached_judgments_follow_inputs_when_pair_order_is_reversed(tmp_path):

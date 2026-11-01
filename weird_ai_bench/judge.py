@@ -7,13 +7,13 @@ import json
 import math
 import re
 
-from .llm import display_name, family
+from .llm import LLMError, display_name, family
 from .craft import COHERENCE, PARODY_CRAFT, describe_craft
 from .orchestrate import render_sheet, result_scenario
 from .spec import describe_internal_rhyme, result_spec, syllable_map
 
-# Bump when a judge prompt changes; cached judgments from other versions are ignored.
-JUDGE_VERSION = 7
+# Bump when prompts or verdict interpretation change; older caches are ignored.
+JUDGE_VERSION = 8
 
 CRITERIA = {
     "singability": "Would the lines fit the original melody when sung? Natural word stress, "
@@ -334,8 +334,10 @@ def rubric(result: dict, client, judge_model: str) -> dict:
 
 
 def pairwise(a: dict, b: dict, client, judge_model: str) -> dict:
-    """Compare two songs twice with positions swapped. Returns winner 'a', 'b', or 'tie'."""
+    """Compare both orders; an invalid or failed response leaves the pair unresolved."""
     votes = []
+    responses = []
+    api_failed = False
     crit_b = criteria(b)
     weigh = ", ".join(k.replace("_", " ") for k in criteria(a) if k in crit_b)
     for first, second, flip in ((a, b, False), (b, a, True)):
@@ -363,19 +365,51 @@ def pairwise(a: dict, b: dict, client, judge_model: str) -> dict:
                       f"SONG 2 was written under this setup:\n\n{ctx2}\n\n"
                       f"SONG 2:\n\n{_sheet(second)}\n\n")
         prompt += 'Reply with JSON only: {"winner": 1 or 2 or "tie", "reason": "one sentence"}'
-        comp = client.complete(judge_model, [{"role": "user", "content": prompt}])
-        data = _extract_json(comp.text)
-        w = str(data.get("winner")).strip().lower()
-        pick = {"1": "first", "2": "second"}.get(w, "tie")
-        if pick == "first":
-            votes.append("b" if flip else "a")
-        elif pick == "second":
-            votes.append("a" if flip else "b")
+        response = {"order": [first["id"], second["id"]], "raw_text": None,
+                    "reason": None, "cost": None, "error": None, "error_kind": None,
+                    "model": None, "prompt_tokens": None, "completion_tokens": None,
+                    "latency_s": None, "finish_reason": None, "attempted": False}
+        if api_failed:
+            responses.append(response)
+            votes.append(None)
+            continue
+        response["attempted"] = True
+        vote = None
+        try:
+            comp = client.complete(judge_model, [{"role": "user", "content": prompt}])
+        except LLMError as exc:
+            response["error"] = str(exc)
+            response["error_kind"] = "api"
+            api_failed = True
         else:
-            votes.append("tie")
+            response.update(raw_text=comp.text, cost=comp.cost,
+                            model=comp.model, prompt_tokens=comp.prompt_tokens,
+                            completion_tokens=comp.completion_tokens,
+                            latency_s=comp.latency_s, finish_reason=comp.raw_finish)
+            try:
+                data = _extract_json(comp.text)
+                response["reason"] = data.get("reason")
+                winner = data.get("winner")
+                # Reject booleans, floats, and invented labels rather than making up a tie.
+                if type(winner) is int and winner in (1, 2):
+                    vote = ("b" if flip else "a") if winner == 1 else ("a" if flip else "b")
+                elif isinstance(winner, str) and winner.strip().lower() == "tie":
+                    vote = "tie"
+                else:
+                    raise ValueError("winner must be the integer 1, integer 2, or 'tie'")
+            except ValueError as exc:
+                response["error"] = str(exc)
+                response["error_kind"] = "verdict"
+        responses.append(response)
+        votes.append(vote)
+    resolved = all(v is not None for v in votes)
     # Every disagreement, including a win paired with a tie, is a tie.
-    score_a = {"a": 1.0, "tie": 0.5, "b": 0.0}[votes[0]] if votes[0] == votes[1] else 0.5
-    winner = "a" if score_a > 0.5 else "b" if score_a < 0.5 else "tie"
+    score_a = ({"a": 1.0, "tie": 0.5, "b": 0.0}[votes[0]]
+               if votes[0] == votes[1] else 0.5) if resolved else None
+    winner = ("a" if score_a > 0.5 else "b" if score_a < 0.5 else "tie") if resolved else None
     return {"a": a["id"], "b": b["id"], "winner": winner, "score_a": score_a,
-            "votes": votes, "consistent": votes[0] == votes[1], "judge": judge_model,
+            "status": "resolved" if resolved else "unresolved", "responses": responses,
+            "known_cost": sum(r["cost"] for r in responses if r["cost"] is not None),
+            "missing_cost_calls": sum(r["attempted"] and r["cost"] is None for r in responses),
+            "votes": votes, "consistent": votes[0] == votes[1] if resolved else None, "judge": judge_model,
             "judge_version": JUDGE_VERSION}

@@ -22,6 +22,8 @@ def test_leaderboard_json_export(monkeypatch, tmp_path):
     from weird_ai_bench.cli import main
 
     board = {"judge": "example/judge", "pairs": 1, "flip_rate": 0, "forfeits": 0,
+             "scheduled_pairs": 1, "skipped_pairs": 0, "unresolved_judgments": 0,
+             "by_judge": {}, "new_judging_cost": {"known_cost": 0, "missing_cost_calls": 0},
              "warnings": [], "table": [{"model": "example/model", "elo": 1000,
              "elo_lo": 950, "elo_hi": 1050, "games": 1, "win_rate": .5}]}
     monkeypatch.setattr("weird_ai_bench.leaderboard.load_runs", lambda paths: [{}, {}])

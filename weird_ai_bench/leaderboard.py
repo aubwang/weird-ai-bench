@@ -276,6 +276,8 @@ def _balanced(cands: list[tuple[int, int]], k: int | None, counts: dict[int, int
 
 
 def _consistent(rec: dict) -> bool | None:
+    if rec.get("status") == "unresolved":
+        return None
     if rec.get("consistent") is not None:
         return bool(rec["consistent"])
     votes = rec.get("votes") or []
@@ -425,6 +427,11 @@ def leaderboard(runs: list[dict], client, judge_model: str | list[str], cache_pa
 
     comparisons, records, pair_idx = [], [], []
     conflicted, shared, agreed, skipped = 0, 0, 0, 0
+    new_records = []
+    disabled_judges = set()
+    scheduled_by_judge = defaultdict(int)
+    unattempted_by_judge = defaultdict(int)
+    missing_by_judge = defaultdict(int)
     input_hashes: dict[int, str] = {}
     with cache_path.open("a") as fh:
         for n, (i, j) in enumerate(pairs, 1):
@@ -443,10 +450,15 @@ def leaderboard(runs: list[dict], client, judge_model: str | list[str], cache_pa
                 conflicted += forced
                 recs = []
                 for judge in panel:
+                    scheduled_by_judge[judge] += 1
                     key = _ckey(judge, a["id"], b["id"], input_hashes[i], input_hashes[j])
-                    if key in cache:
+                    if key in cache and (cached_only or cache[key].get("status") != "unresolved"):
                         rec = cache[key]
                     elif cached_only:
+                        missing_by_judge[judge] += 1
+                        continue
+                    elif judge in disabled_judges:
+                        unattempted_by_judge[judge] += 1
                         continue
                     else:
                         log(f"  judging pair {n}/{len(pairs)} with {judge}")
@@ -457,7 +469,15 @@ def leaderboard(runs: list[dict], client, judge_model: str | list[str], cache_pa
                         fh.write(json.dumps(rec) + "\n")
                         fh.flush()
                         cache[key] = rec
+                        new_records.append(rec)
+                        if any(r.get("error_kind") == "api" for r in rec.get("responses", [])):
+                            disabled_judges.add(judge)
+                            warnings.append(f"Stopped new calls to {judge} after an API error; "
+                                            "remaining judgments without resolved cache entries are unattempted. "
+                                            "Check the saved error before retrying.")
                     recs.append(rec)
+            records.extend(recs)
+            recs = [r for r in recs if r.get("status") != "unresolved"]
             if not recs:
                 skipped += 1
                 continue
@@ -466,10 +486,14 @@ def leaderboard(runs: list[dict], client, judge_model: str | list[str], cache_pa
                 shared += 1
                 agreed += len(set(ys)) == 1
             comparisons.append((weights[i], weights[j], sum(ys) / len(ys)))
-            records.extend(recs)
             pair_idx.append((i, j))
     if skipped:
-        warnings.append(f"{skipped} scheduled pairs had no cached judgment and were left out.")
+        warnings.append(f"{skipped} scheduled pairs had no resolved judgment and were left out of the fit.")
+    unresolved = sum(r.get("status") == "unresolved" for r in records)
+    if unresolved:
+        warnings.append(f"{unresolved} judge-pair judgments remain unresolved; a normal run "
+                        "(without cached_only) retries them. "
+                        "Other resolved panel votes still count.")
     if conflicted:
         warnings.append(f"{conflicted} pairs had no judge outside their singers' families, so the "
                         f"whole panel judged them.")
@@ -498,10 +522,29 @@ def leaderboard(runs: list[dict], client, judge_model: str | list[str], cache_pa
          for m, v in strengths.items()),
         key=lambda r: -r["elo"])
     judged = [c for r in records if r.get("judge") != "forfeit" and (c := _consistent(r)) is not None]
+    by_judge = {}
+    for judge in judges:
+        rows = [r for r in records if r.get("judge") == judge]
+        valid = [r for r in rows if r.get("status") != "unresolved"]
+        consistency = [c for r in valid if (c := _consistent(r)) is not None]
+        by_judge[judge] = {
+            "scheduled": scheduled_by_judge[judge],
+            "unattempted": unattempted_by_judge[judge], "missing_cached": missing_by_judge[judge],
+            "judgments": len(rows), "resolved": len(valid), "unresolved": len(rows) - len(valid),
+            "ties": sum(r.get("votes") == ["tie", "tie"] for r in valid),
+            "order_flips": sum(not c for c in consistency),
+            "flip_rate": sum(not c for c in consistency) / len(consistency) if consistency else None,
+        }
     return {"metrics_version": METRICS_VERSION,
             "meter_deprecated_alias": "adherence",
             "judge": judges[0] if len(judges) == 1 else "panel: " + ", ".join(judges),
             "judges": judges, "pairs": len(comparisons), "table": table, "records": records,
+            "scheduled_pairs": len(pairs), "skipped_pairs": skipped,
+            "unresolved_judgments": unresolved, "by_judge": by_judge,
+            "new_judging_cost": {
+                "known_cost": sum(r.get("known_cost", 0) for r in new_records),
+                "missing_cost_calls": sum(r.get("missing_cost_calls", 0) for r in new_records),
+            },
             "flip_rate": (sum(not c for c in judged) / len(judged)) if judged else None,
             "judge_agreement": agreed / shared if shared else None,
             "warnings": warnings,

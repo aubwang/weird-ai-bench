@@ -1,13 +1,15 @@
 # Working benchmark protocol
 
-This is the working profile for new craft-guided experiments. It is an experimental setup, not a change to the published leaderboard or a claim that text judging establishes singing quality. Keep older templates and results available as baselines.
+This is the working profile for evaluating how models handle creative writing under constraints: following musical structure, transforming meaning, sustaining a premise, and responding to another singer. It measures capabilities on this task, not general intelligence. It does not change the published leaderboard or establish singing quality from text alone.
+
+Give every model the same reviewed musical guidance. Guidance defines the task; comparing guidance against no guidance is optional research, not a prerequisite for the benchmark. Keep older templates and results available as historical baselines.
 
 ## Writer setup
 
 - Use a reviewed template with explicit line counts, rhyme groups, source reference, and score-derived rhythm where available. Describe omissions or rearrangements; an excerpt is not a full performance.
 - Use `--track freeform --guidance full --rhythm beats --retries 0`. There is one writing attempt per turn. Keep declared template gates and tolerances unchanged across comparisons.
 - Put source-device descriptions in `craft_notes`. Notes describe rhetorical or musical structure, not new jokes or proposed answers. Any one cue may change, but enough other features should keep the lyrics recognizable as a transformation of the source.
-- Match writer models, singer roles, scenario, effort, token limit, temperature and sampling policy across arms. When studying one model, give that same model each singer role rather than inadvertently sweeping mixed-model lineups.
+- Hold singer roles, scenario, guidance, effort, token limit, temperature and sampling policy fixed across the models being compared. To measure each model's own performance, give it every singer role; treat mixed-model collaboration as a separate experiment.
 - Keep calibration examples and human-written answers out of writer prompts. Inspect and save the actual prompts before generation.
 
 A free, synthetic prompt preview:
@@ -28,7 +30,9 @@ The rubric belongs inside the judge prompt. Feedback explains the judgment; it i
 
 Compare complete songs blindly with judges from different model families than the writers. Show each pair in both orders. A judge whose two votes disagree contributes a tie. Report each judge separately; any consensus rule must be declared before collecting judgments. Keep invalid or missing responses unresolved rather than silently counting them as valid ties. Save failed generation attempts and apply the declared forfeit policy.
 
-For a treatment comparison, use one common judging endpoint for both arms and document it. The standard mixed-comparison path preserves each song's original criteria, which is a different question. Do not silently replace saved template snapshots to force content groups together. Historical baselines can be reused for an exploratory comparison, but model/provider changes and arbitrary pairing of independent samples remain limitations.
+Use the normal within-group leaderboard to compare different models under the same setup. Inspect saved explanations and lyrics for concrete successes and failures as well as reporting the rating.
+
+If separately studying a guidance treatment, use one common judging endpoint for both arms and document it. The standard mixed-comparison path preserves each song's original criteria, and the model leaderboard skips pairs with identical model contributions; it is not a treatment-effect analysis. Do not silently replace saved template snapshots to force content groups together.
 
 ## Report separate outcomes
 
