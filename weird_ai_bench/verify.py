@@ -13,7 +13,7 @@ METER_GATES = ("syllables", "stress", "split")
 
 # Bump when a rule change can move a saved run's scores; `weird-ai-bench rescore`
 # brings old runs up to date. Runs saved without a version count as 1.
-SCORING_VERSION = 5
+SCORING_VERSION = 6
 
 # Unstressed words that lean on the word before them at a line end, so the pair
 # rhymes as one: "show me" / "lonely".

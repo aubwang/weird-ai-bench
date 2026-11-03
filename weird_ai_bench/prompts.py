@@ -226,12 +226,19 @@ _NUMBERING = re.compile(r"^\s*(?:\d+[.)]|[-*•]|line\s*\d+\s*[:.-])\s*", re.I)
 _COUNT = re.compile(r"\s*[\[(]\s*\d+(?:\s*\+\s*\d+)?\s*(?:syllables?)?[^\])]*[\])]\s*$", re.I)
 
 
+def lyric_block(lines: list[str]) -> str:
+    """A reply as the next turn sees it: just its lyrics, in the tags the rules ask for."""
+    return "<lyrics>\n" + "\n".join(lines) + ("\n" if lines else "") + "</lyrics>"
+
+
 def parse_lyrics(text: str) -> list[str]:
     """Extract lyric lines from a model response."""
     text = text or ""
     blocks = re.findall(r"<lyrics>(.*?)</lyrics>", text, flags=re.S | re.I)
     if blocks:
         body = blocks[-1]
+    elif not re.search(r"</?lyrics>", text, re.I):
+        return []  # no tags at all: the reply is working or a refusal, not lyrics
     else:
         # One tag missing: keep the side of the lone tag the lyrics are on.
         body = re.split(r"</lyrics>", text, flags=re.I)[0] if re.search(r"</lyrics>", text, re.I) \

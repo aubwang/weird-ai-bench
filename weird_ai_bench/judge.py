@@ -136,8 +136,11 @@ def _context(result: dict) -> str:
     # reveals no model; replacing them would leave "Singer 1 plays Singer 1".
     characters = tuple(p for p in (cfg.get("personas") or [])
                        if p and cfg.get("names") == "assigned" and not _names_a_model(p, result))
-    setup = redact_names("\n".join(x for x in setup if x.strip()), result,
-                         (spec.title, spec.artist, *characters))
+    # Names the setup itself gives every singer stay, as they do in the lyric sheet:
+    # redacting them only for their own family's songs would garble those setups and
+    # reveal who wrote them.
+    kept = (spec.title, spec.artist, *characters, *scenario_terms(result))
+    setup = redact_names("\n".join(x for x in setup if x.strip()), result, kept)
     setup_note = (f"The singers were given this setup:\n<setup>\n{setup}\n</setup>" if setup
                   else "The singers were given no setup beyond the song itself.")
     refrains = []
@@ -162,8 +165,7 @@ def _context(result: dict) -> str:
                      if internal else "")
     craft_note = ""
     if cfg.get("guidance", "full") == "full" and spec.uses_craft_guidance:
-        craft_note = redact_names(describe_craft(spec), result,
-                                  (spec.title, spec.artist, *characters)) + "\n\n"
+        craft_note = redact_names(describe_craft(spec), result, kept) + "\n\n"
     ref = spec.reference_text()
     ref_note = (
         "Here are the original song's lyrics, for judging parody craft. Lines copied from the "

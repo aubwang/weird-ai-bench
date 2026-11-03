@@ -15,7 +15,7 @@ from pathlib import Path
 from .llm import display_name
 from .metrics import section_metrics, summarize_metrics
 from .prompts import (
-    trade_line_task, chorus_task, label, parse_lyrics, render_song_so_far,
+    trade_line_task, chorus_task, label, lyric_block, parse_lyrics, render_song_so_far,
     retry_message, section_task, system_prompt,
 )
 from .scenario import Scenario, load_scenario, scenario_from_dict
@@ -25,6 +25,9 @@ from .verify import (
 )
 
 NAMES = ("real", "assigned", "anonymous")
+# What earlier replies look like in a singer's conversation. "lyrics": only the
+# lyrics block. Runs saved before this field existed replayed whole replies ("full").
+HISTORY = "lyrics"
 CHORUS = ("auto", "fixed", "original")  # or a singer number, who writes it
 TRACKS = ("strict", "freeform")
 GUIDANCE = ("full", "none")  # none: no song map in the prompts, only the reference lyrics
@@ -321,8 +324,12 @@ class Song:
             self.usage["completion_tokens"] += comp.completion_tokens
             if comp.cost:
                 self.usage["cost"] += comp.cost
-            thread.append({"role": "assistant", "content": comp.text})
             lines = parse_lyrics(comp.text)
+            # The thread keeps only the answer, never the working around it. Some models
+            # refuse once enough of their own replayed working builds up in a
+            # conversation, and the lyrics are all the next turn needs. The full reply
+            # is saved with the attempt below.
+            thread.append({"role": "assistant", "content": lyric_block(lines)})
             if single:
                 lines = lines[:1] if lines else []
             rep: SectionReport = check(lines, len(parse_lyrics(comp.text)))
@@ -417,6 +424,7 @@ class Song:
         result = {
             "version": 2,
             "generation_scoring_version": SCORING_VERSION,
+            "history": HISTORY,
             "id": _run_id(cfg, self.scenario.id),
             "created": datetime.now(timezone.utc).isoformat(timespec="seconds"),
             "spec": spec.id,

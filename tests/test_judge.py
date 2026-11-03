@@ -112,11 +112,19 @@ def test_no_reference_block_without_reference_lyrics():
     assert "<reference_lyrics>" not in _context(r)
 
 
-def test_setup_text_is_redacted():
-    r = make()
-    r["scenario_snapshot"]["text"] = "Claude and GPT-5 sing about {title}."
-    ctx = _context(r)
-    assert "Singer 1 and Singer 2 sing about" in ctx and "Claude" not in ctx
+def test_setup_keeps_names_every_singer_was_given():
+    """A family named by the scenario stays in the setup whoever wrote the song, so the
+    judge's setup is identical across writers and reveals none of them."""
+    text = "One singer plays the CEO of Anthropic, maker of Claude; the other, OpenAI's."
+    setups = []
+    for models in (["anthropic/claude-sonnet-5"] * 2, ["openai/gpt-5"] * 2,
+                   ["google/gemini-3"] * 2):
+        r = make(models)
+        r["scenario_snapshot"]["text"] = text
+        ctx = _context(r)
+        setups.append(ctx[ctx.index("<setup>"):ctx.index("</setup>")])
+    assert setups[0] == setups[1] == setups[2]
+    assert "CEO of Anthropic, maker of Claude" in setups[0] and "OpenAI's" in setups[0]
 
 
 def test_mix_gives_each_song_its_own_setup():
@@ -252,10 +260,12 @@ def test_setup_keeps_assigned_character_names():
     r = make(names="assigned", personas=["Harbor", "Lantern"])
     r["scenario_snapshot"]["text"] = "Singer 1 plays Harbor. Singer 2 plays Lantern."
     assert "Singer 1 plays Harbor. Singer 2 plays Lantern." in _context(r)
-    # A persona that is also a singer's model name is still hidden.
+    # A persona named in the setup stays even when it is also a singer's model name:
+    # every song in the group was given it, so hiding it only in GPT's songs would
+    # set those songs apart.
     r = make(names="assigned", personas=["GPT", "Lantern"])
     r["scenario_snapshot"]["text"] = "Singer 1 plays GPT."
-    assert "plays GPT" not in _context(r)
+    assert "Singer 1 plays GPT." in _context(r)
 
 
 def test_names_the_setup_gives_everyone_stay_visible():

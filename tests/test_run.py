@@ -232,3 +232,26 @@ def test_failed_trade_keeps_lines_written_so_far():
     assert r["failed"]["section"] == "exchange"
     assert r["parts"]["exchange"] == {"lines": ["Take me along"], "author": [1, 2]}
     assert r["scores"]["by_singer"]["2"]["adherence"] == 0
+
+
+def test_reply_without_tags_is_not_lyrics():
+    # A cut-off reply that never reached its tags is working, not a sung line.
+    assert parse_lyrics("Line 3 must rhyme with late. Count: we(1) can(2) co(3)-op(4)") == []
+
+
+def test_thread_keeps_only_the_lyrics_of_each_reply():
+    working = "Count: The(1) sky(2) is(3) bright(4). Good.\n<lyrics>\nThe sky is bright\n</lyrics>\nDone."
+    replies = [CHORUS_REPLY_WITH_WORK, working, *TAIL_REPLIES]
+    song = Song(RunConfig(["a/one", "b/two"], track="freeform"), ScriptedClient(replies))
+    r = song.run()
+    sent = [m["content"] for t in song.threads.values() for m in t if m["role"] == "assistant"]
+    assert sent and all(m.startswith("<lyrics>") and m.endswith("</lyrics>") for m in sent)
+    assert not any("Count:" in m for m in sent)
+    # The saved attempt still has the whole reply, and the run records the history form.
+    assert any("Count:" in a["response"] for t in r["turns"] for a in t["attempts"])
+    assert r["history"] == "lyrics"
+
+
+CHORUS_REPLY_WITH_WORK = "I'll keep it short.\n<lyrics>\nWe watch the light\nWe walk back home\n</lyrics>"
+TAIL_REPLIES = ["<lyrics>You take the road</lyrics>", "<lyrics>I take the train</lyrics>",
+                "<lyrics>Now we walk back home</lyrics>"]

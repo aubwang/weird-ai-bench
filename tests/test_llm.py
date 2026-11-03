@@ -78,3 +78,48 @@ def test_custom_endpoint_never_falls_back_to_router_key(monkeypatch, base):
 ])
 def test_family(model, expected):
     assert family(model) == expected
+
+
+def _scripted_http(monkeypatch, replies):
+    """An OpenRouterClient whose HTTP replies come from `replies`; sleeps are recorded, not taken."""
+    requests, sleeps = [], []
+
+    def respond(request):
+        requests.append(request)
+        status, payload, headers = replies.pop(0)
+        return httpx.Response(status, json=payload, headers=headers or {})
+
+    http = httpx.Client(transport=httpx.MockTransport(respond))
+    monkeypatch.setattr("weird_ai_bench.llm.httpx.Client", lambda **kwargs: http)
+    monkeypatch.setattr("weird_ai_bench.llm.time.sleep", sleeps.append)
+    monkeypatch.setattr("weird_ai_bench.llm.random.random", lambda: 0.0)
+    return OpenRouterClient(api_key="test"), requests, sleeps
+
+
+LIMITED = {"error": {"message": "temporarily rate-limited upstream", "code": 429}}
+OK = {"choices": [{"message": {"content": "hello"}}]}
+
+
+def test_upstream_rate_limit_waits_longer_than_transient_errors(monkeypatch):
+    client, requests, sleeps = _scripted_http(monkeypatch, [(200, LIMITED, None)] * 6 + [(200, OK, None)])
+    assert client.complete("test/model", []).text == "hello"
+    assert len(requests) == 7
+    assert sleeps == [5, 10, 20, 40, 60, 60]  # past the ~30s the transient backoff allows
+
+
+def test_rate_limit_honors_retry_after_and_gives_up_eventually(monkeypatch):
+    client, _, sleeps = _scripted_http(monkeypatch, [(429, {}, {"retry-after": "7"})] + [(200, LIMITED, None)] * 9)
+    with pytest.raises(LLMError, match="rate-limited"):
+        client.complete("test/model", [])
+    assert sleeps[0] == 7 and len(sleeps) == client.rate_limit_retries
+
+
+@pytest.mark.parametrize("payload", [
+    {"error": {"message": "invalid model", "code": 400}},
+    {"choices": [{"message": {"content": ""}, "finish_reason": "content_filter"}]},
+])
+def test_errors_that_repeat_are_not_retried(monkeypatch, payload):
+    client, requests, sleeps = _scripted_http(monkeypatch, [(200, payload, None)])
+    with pytest.raises(LLMError):
+        client.complete("test/model", [])
+    assert len(requests) == 1 and sleeps == []

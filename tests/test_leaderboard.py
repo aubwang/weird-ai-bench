@@ -593,3 +593,16 @@ def test_cached_only_skips_missing_judgments(tmp_path, monkeypatch):
     out = leaderboard(runs, None, "j/judge", cache, bootstrap=0, cached_only=True,
                       pairs=[("r0", "r1"), ("r1", "r2")])
     assert out["pairs"] == 1 and any("left out" in w for w in out["warnings"])
+
+
+def test_history_form_separates_groups():
+    from weird_ai_bench.leaderboard import group_key
+    from weird_ai_bench.llm import ScriptedClient
+    from weird_ai_bench.orchestrate import RunConfig, Song
+    replies = ["<lyrics>We watch the light\nWe walk back home</lyrics>", "<lyrics>The sky is bright</lyrics>",
+               "<lyrics>You take the road</lyrics>", "<lyrics>I take the train</lyrics>",
+               "<lyrics>Now we walk back home</lyrics>"]
+    new = Song(RunConfig(["a/one", "b/two"], track="freeform"), ScriptedClient(list(replies))).run()
+    old = {**new, "history": None}
+    del old["history"]  # saved before the field existed: whole replies were replayed
+    assert group_key(new) != group_key(old)

@@ -56,7 +56,7 @@ def group_key(run: dict) -> tuple:
     return (template, scenario, c["names"], c["chorus"], c["track"], c.get("guidance", "full"),
             reference, supplied, c.get("tolerance", 0), retries, gates,
             c.get("temperature"), c.get("effort"), evaluation_version, generation_version,
-            c.get("rhythm", "none"))
+            c.get("rhythm", "none"), run.get("history", "full"))
 
 
 def singer_weights(run: dict) -> dict[str, float]:
