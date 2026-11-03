@@ -33,6 +33,17 @@ class LLMError(RuntimeError):
     pass
 
 
+_RETRYABLE = (408, 429, 500, 502, 503, 504)
+
+
+def _retry_after(value: str | None) -> float | None:
+    """Seconds from a Retry-After header given in seconds; dates are ignored."""
+    try:
+        return max(float(value), 0.0) if value is not None else None
+    except ValueError:
+        return None
+
+
 @dataclass
 class OpenRouterClient:
     api_key: str | None = None
@@ -42,6 +53,10 @@ class OpenRouterClient:
     seed: int | None = None
     timeout_s: float = 600.0  # long reasoning turns can run past 5 minutes
     retries: int = 4
+    # Upstream rate limits on shared capacity can last minutes, longer than the
+    # short backoff for transient errors. Waits double from 5s, capped at a minute.
+    rate_limit_retries: int = 8
+    rate_limit_max_wait_s: float = 60.0
     _http: httpx.Client | None = field(default=None, repr=False)
 
     def __post_init__(self):
@@ -74,10 +89,13 @@ class OpenRouterClient:
             "Authorization": f"Bearer {self.api_key}",
             "X-Title": "weird-ai-bench",
         }
-        delay = 2.0
+        delay, limit_delay = 2.0, 5.0
         last_err = ""
-        for attempt in range(self.retries + 1):
+        attempt = limited = 0
+        while True:
             t0 = time.monotonic()
+            wait = None  # seconds a rate limit asked for, when it said
+            rate_limited = False
             try:
                 r = self._http.post(self.url, json=body, headers=headers)
             except httpx.HTTPError as e:
@@ -86,7 +104,13 @@ class OpenRouterClient:
                 if r.status_code == 200:
                     data = r.json()
                     if "error" in data:
-                        last_err = str(data["error"])
+                        err = data["error"]
+                        code = err.get("code") if isinstance(err, dict) else None
+                        last_err = str(err)
+                        if code == 429:
+                            rate_limited = True
+                        elif isinstance(code, int) and code not in _RETRYABLE:
+                            raise LLMError(f"{model}: {last_err}")
                     else:
                         choice = data["choices"][0]
                         text = (choice.get("message") or {}).get("content") or ""
@@ -95,6 +119,9 @@ class OpenRouterClient:
                             raise LLMError(
                                 f"{model} used all {self.max_tokens} tokens before answering "
                                 f"(likely reasoning); raise --max-tokens or lower --effort")
+                        if not text.strip() and choice.get("finish_reason") == "content_filter":
+                            # A refusal repeats for the same request; retrying only spends money.
+                            raise LLMError(f"{model}: empty response (finish_reason=content_filter)")
                         if not text.strip():
                             last_err = f"empty response (finish_reason={choice.get('finish_reason')})"
                         else:
@@ -107,13 +134,26 @@ class OpenRouterClient:
                                 latency_s=time.monotonic() - t0,
                                 raw_finish=choice.get("finish_reason"),
                             )
-                elif r.status_code in (408, 429, 500, 502, 503, 504):
+                elif r.status_code in _RETRYABLE:
                     last_err = f"HTTP {r.status_code}: {r.text[:300]}"
+                    if r.status_code == 429:
+                        rate_limited = True
+                        wait = _retry_after(r.headers.get("retry-after"))
                 else:
                     raise LLMError(f"{model}: HTTP {r.status_code}: {r.text[:500]}")
-            if attempt < self.retries:
-                time.sleep(delay + random.random())
-                delay *= 2
+            if rate_limited:
+                if limited >= self.rate_limit_retries:
+                    break
+                limited += 1
+                pause = wait if wait is not None else limit_delay
+                time.sleep(min(pause, self.rate_limit_max_wait_s) + random.random())
+                limit_delay = min(limit_delay * 2, self.rate_limit_max_wait_s)
+                continue
+            if attempt >= self.retries:
+                break
+            attempt += 1
+            time.sleep(delay + random.random())
+            delay *= 2
         raise LLMError(f"{model}: {last_err}")
 
 
