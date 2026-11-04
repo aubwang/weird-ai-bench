@@ -4,6 +4,7 @@ import copy
 import json
 import math
 import random
+from collections import defaultdict
 from dataclasses import asdict
 
 import pytest
@@ -562,6 +563,101 @@ def test_panel_falls_back_to_everyone_when_all_conflict(tmp_path, monkeypatch):
     out = leaderboard(runs, None, ["a/judge", "b/judge"], tmp_path / "c.jsonl", bootstrap=0)
     assert {r["judge"] for r in out["records"]} == {"a/judge", "b/judge"}
     assert any("whole panel" in w for w in out["warnings"])
+
+
+def test_judge_cap_picks_eligible_judges_stably_and_evenly(tmp_path, monkeypatch):
+    seen = []
+
+    def fake(a, b, client, judge):
+        seen.append((judge, frozenset((a["id"], b["id"]))))
+        return {"a": a["id"], "b": b["id"], "winner": "a", "score_a": 1.0, "votes": ["a", "a"],
+                "judge": judge, "judge_version": JUDGE_VERSION}
+
+    monkeypatch.setattr(lb, "pairwise", fake)
+    panel = ["a/judge", "c/judge", "d/judge"]
+    runs = [fake_run(f"r{i}", [f"m{i}/x"] * 2) for i in range(12)]
+    runs.append(fake_run("ra", ["a/x", "a/x"]))
+    out = leaderboard(runs, None, panel, tmp_path / "c.jsonl", max_pairs=None, bootstrap=0,
+                      max_judges=1)
+    per_pair = defaultdict(list)
+    for judge, pair in seen:
+        per_pair[pair].append(judge)
+    assert len(per_pair) == out["pairs"] == 78 and all(len(js) == 1 for js in per_pair.values())
+    assert all(js != ["a/judge"] for pair, js in per_pair.items() if "ra" in pair)
+    load = {j: sum(js == [j] for js in per_pair.values()) for j in panel}
+    assert min(load.values()) >= 15, load  # 78 pairs over three judges: about 26 each
+    assert out["judge_agreement"] is None
+
+    # A reversed schedule, or a different panel order, picks the same judge for every pair.
+    by_id = {r["id"]: r for r in runs}
+    for pair, js in per_pair.items():
+        a_id, b_id = sorted(pair)
+        eligible, _ = lb.panel_for(panel, by_id[a_id], by_id[b_id])
+        assert lb.capped(eligible, 1, b_id, a_id) == js
+        assert lb.capped(list(reversed(eligible)), 1, a_id, b_id) == js
+    assert lb.capped(panel, 2, "x", "y") == [j for j in panel if j in lb.capped(panel, 2, "y", "x")]
+    assert lb.capped(panel, None, "x", "y") == panel == lb.capped(panel, 3, "x", "y")
+    with pytest.raises(ValueError):
+        leaderboard(runs, None, panel, tmp_path / "c.jsonl", max_judges=0)
+
+
+def test_kept_schedule_survives_a_bigger_stage(tmp_path, monkeypatch):
+    a_wins(monkeypatch)
+    first = [fake_run(f"r{i}", [f"m{i}/x"] * 2) for i in range(6)]
+    stage1 = leaderboard(first, None, "j/judge", tmp_path / "c.jsonl", max_pairs=5, bootstrap=0)
+    assert len(stage1["schedule"]) == 5
+
+    more = first + [fake_run(f"n{i}", [f"k{i}/x"] * 2) for i in range(6)]
+    stage2 = leaderboard(more, None, "j/judge", tmp_path / "c.jsonl", max_pairs=20, bootstrap=0,
+                         keep_pairs=[tuple(p) for p in stage1["schedule"]])
+    assert stage2["schedule"][:5] == stage1["schedule"] and len(stage2["schedule"]) == 20
+    assert len({frozenset(p) for p in stage2["schedule"]}) == 20
+    seen = defaultdict(int)
+    for a_id, b_id in stage2["schedule"]:
+        seen[a_id] += 1
+        seen[b_id] += 1
+    assert all(seen[f"n{i}"] >= 2 for i in range(6))  # the new songs get opponents too
+
+    stage3 = leaderboard(more[1:], None, "j/judge", tmp_path / "c.jsonl", max_pairs=3, bootstrap=0,
+                         keep_pairs=[tuple(p) for p in stage2["schedule"]])
+    assert any("aren't loaded" in w for w in stage3["warnings"])
+    assert any("more than --max-pairs" in w for w in stage3["warnings"])
+    assert all("r0" not in p for p in stage3["schedule"])
+
+
+def test_cli_schedule_file_is_kept_and_grown(tmp_path, monkeypatch, capsys):
+    from weird_ai_bench.cli import main
+    a_wins(monkeypatch)
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test")
+    pool = tmp_path / "pool"
+    pool.mkdir()
+    for i in range(5):
+        (pool / f"r{i}.json").write_text(json.dumps(fake_run(f"r{i}", [f"m{i}/x"] * 2)))
+    schedule = tmp_path / "schedule.json"
+    args = ["leaderboard", str(pool), "--judge", "j/judge", "--bootstrap", "0",
+            "--schedule", str(schedule)]
+    assert main(args + ["--max-pairs", "3"]) == 0
+    first = json.loads(schedule.read_text())["pairs"]
+    for i in range(5, 8):
+        (pool / f"r{i}.json").write_text(json.dumps(fake_run(f"r{i}", [f"m{i}/x"] * 2)))
+    assert main(args + ["--max-pairs", "9"]) == 0
+    second = json.loads(schedule.read_text())["pairs"]
+    assert second[:3] == first and len(second) == 9
+    capsys.readouterr()
+
+
+def test_intervals_ignore_draws_that_left_a_model_out(tmp_path, monkeypatch):
+    def star_wins(a, b, client, judge):
+        win = "a" if a["id"] == "r0" else "b" if b["id"] == "r0" else "tie"
+        return {"a": a["id"], "b": b["id"], "winner": win, "score_a": {"a": 1.0, "b": 0.0}.get(win, 0.5),
+                "votes": [win, win], "judge": judge, "judge_version": JUDGE_VERSION}
+
+    monkeypatch.setattr(lb, "pairwise", star_wins)
+    # One song per model: a resample of the group leaves r0 out about a third of the time.
+    runs = [fake_run(f"r{i}", [f"m{i}/x"] * 2) for i in range(10)]
+    out = leaderboard(runs, None, "j/judge", tmp_path / "c.jsonl", max_pairs=None, bootstrap=200)
+    star = next(r for r in out["table"] if r["model"] == "m0/x")
+    assert star["elo_lo"] > 1000  # not pinned to the prior's mean by draws without it
 
 
 def test_table_reports_meter_beside_elo(tmp_path, monkeypatch):

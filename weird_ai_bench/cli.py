@@ -464,13 +464,23 @@ def cmd_leaderboard(args) -> int:
         return 1
     if _mixed_versions(runs):
         return 2
+    if args.max_judges_per_pair is not None and args.max_judges_per_pair < 1:
+        _log("--max-judges-per-pair must be at least 1")
+        return 2
     client = OpenRouterClient(max_tokens=args.max_tokens)
     first = Path(args.paths[0])
     cache = (first if first.is_dir() else first.parent) / "judgments.jsonl"
     judges = args.judge[0] if len(args.judge) == 1 else args.judge
+    schedule = Path(args.schedule) if args.schedule else None
+    keep = ([tuple(p) for p in json.loads(schedule.read_text())["pairs"]]
+            if schedule and schedule.exists() else None)
     lb = leaderboard(runs, client, judges, cache, max_pairs=args.max_pairs,
                      seed=args.seed or 0, mix=args.mix, log=_log, bootstrap=args.bootstrap,
-                     prior_sd=args.prior_sd)
+                     prior_sd=args.prior_sd, max_judges=args.max_judges_per_pair,
+                     keep_pairs=keep)
+    if schedule:
+        schedule.parent.mkdir(parents=True, exist_ok=True)
+        schedule.write_text(json.dumps({"pairs": lb["schedule"]}, indent=1) + "\n", encoding="utf-8")
     if args.json_out:
         destination = Path(args.json_out)
         destination.parent.mkdir(parents=True, exist_ok=True)
@@ -627,6 +637,11 @@ def main(argv=None) -> int:
                    help="judge model id; repeat for a panel, where each pair skips judges "
                         "from its singers' families")
     p.add_argument("--max-pairs", type=int, default=200)
+    p.add_argument("--schedule", help="pair schedule to build on: pairs in this file are kept, new "
+                   "balanced pairs fill up to --max-pairs, and the result is saved back")
+    p.add_argument("--max-judges-per-pair", type=int,
+                   help="with a panel, judge each pair with at most this many of its eligible "
+                        "judges, picked by a hash of the pair so reruns keep them")
     p.add_argument("--json-out", help="save leaderboard data, including raw judge replies that may quote "
                    "private lyrics; keep this export local")
     p.add_argument("--mix", action="store_true", help="compare across settings, not just within")
