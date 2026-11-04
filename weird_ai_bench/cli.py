@@ -377,6 +377,60 @@ def _mixed_versions(runs: list[dict]) -> bool:
     return len(versions) > 1
 
 
+PREFLIGHT_PROMPT = ("Write one line of exactly seven syllables about a cat asleep in the sun. "
+                    "Count carefully. Reply with the line only.")
+
+
+def preflight_one(client, model: str, long: bool) -> dict:
+    """One small call (and optionally a judge-sized one) to check a model before paid runs."""
+    row = {"model": model, "ok": False, "reasoning_tokens": None, "latency_s": None,
+           "cost": None, "long_ok": None, "error": None}
+    try:
+        comp = client.complete(model, [{"role": "user", "content": PREFLIGHT_PROMPT}])
+        row.update(ok=True, reasoning_tokens=comp.reasoning_tokens,
+                   latency_s=round(comp.latency_s, 1), cost=comp.cost)
+    except LLMError as exc:
+        row["error"] = str(exc)
+        return row
+    if long:
+        # About the size of a pairwise judging prompt, to surface size-dependent rate limits.
+        filler = "The quick brown fox jumps over the lazy dog. " * 2200
+        try:
+            client.complete(model, [{"role": "user", "content": filler + "\nReply with the word ok."}])
+            row["long_ok"] = True
+        except LLMError as exc:
+            row.update(long_ok=False, error=str(exc))
+    return row
+
+
+def cmd_preflight(args) -> int:
+    client = _client(args)
+    with ThreadPoolExecutor(max_workers=min(8, len(args.models))) as ex:
+        rows = list(ex.map(lambda m: preflight_one(client, m, args.long), args.models))
+    problems = 0
+    print(f"{'model':45} {'call':6} {'reasoning':>9} {'latency':>8} {'cost':>9}" + ("  judge-size" if args.long else ""))
+    for r in rows:
+        silent = bool(args.effort) and r["ok"] and not r["reasoning_tokens"]
+        bad = not r["ok"] or silent or r["long_ok"] is False
+        problems += bad
+        cost = f"${r['cost']:.4f}" if r["cost"] is not None else "-"
+        line = (f"{r['model']:45} {'ok' if r['ok'] else 'FAIL':6} "
+                f"{r['reasoning_tokens'] if r['reasoning_tokens'] is not None else '-':>9} "
+                f"{str(r['latency_s']) + 's' if r['latency_s'] is not None else '-':>8} {cost:>9}")
+        if args.long:
+            line += "  " + {True: "ok", False: "FAIL", None: "-"}[r["long_ok"]]
+        print(line)
+        if silent:
+            print(f"    no reasoning tokens at effort {args.effort}: this model may not reason at this "
+                  f"setting, so it would be compared at a disadvantage")
+        if r["error"]:
+            print(f"    {r['error'][:300]}")
+    if args.json_out:
+        Path(args.json_out).write_text(json.dumps(rows, indent=2))
+    _log(f"{len(rows) - problems} of {len(rows)} models ready")
+    return 1 if problems else 0
+
+
 def cmd_stats(args) -> int:
     from .leaderboard import gate_stats, load_runs
     runs = load_runs(args.paths)
@@ -583,6 +637,17 @@ def main(argv=None) -> int:
     p.add_argument("--seed", type=int)
     p.add_argument("--max-tokens", type=int, default=DEFAULT_MAX_TOKENS)
     p.set_defaults(func=cmd_leaderboard)
+
+    p = sub.add_parser("preflight", help="check that models answer and reason before a paid run (a few cents)")
+    p.add_argument("models", nargs="+", help="OpenRouter ids")
+    p.add_argument("--effort", choices=["minimal", "low", "medium", "high"],
+                   help="reasoning effort to check; flags models that report no reasoning at it")
+    p.add_argument("--long", action="store_true", help="also send one judge-sized (~20k token) prompt")
+    p.add_argument("--max-tokens", type=int, default=DEFAULT_MAX_TOKENS)
+    p.add_argument("--temperature", type=float)
+    p.add_argument("--seed", type=int)
+    p.add_argument("--json-out", help="save the results as JSON")
+    p.set_defaults(func=cmd_preflight)
 
     p = sub.add_parser("draft", help="draft a song template from a lyrics file, for you to review")
     p.add_argument("file", help="lyrics, with [Section] headers or blank lines between sections")

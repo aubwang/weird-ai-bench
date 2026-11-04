@@ -123,3 +123,28 @@ def test_errors_that_repeat_are_not_retried(monkeypatch, payload):
     with pytest.raises(LLMError):
         client.complete("test/model", [])
     assert len(requests) == 1 and sleeps == []
+
+
+def _text(content):
+    return content if isinstance(content, str) else "".join(p["text"] for p in content)
+
+
+def test_anthropic_threads_get_cache_breakpoints_without_changing_text():
+    from weird_ai_bench.llm import cache_marked
+    msgs = [{"role": "system", "content": "rules"}, {"role": "user", "content": "write verse"},
+            {"role": "assistant", "content": "<lyrics>\nA line\n</lyrics>"}, {"role": "user", "content": "write chorus"}]
+    sent = cache_marked("anthropic/claude-opus-5", msgs)
+    marked = [i for i, m in enumerate(sent) if any("cache_control" in p for p in m["content"])]
+    assert marked == [0, 3]  # the system prompt and the conversation so far
+    assert [_text(m["content"]) for m in sent] == [m["content"] for m in msgs]
+
+
+def test_shared_prefix_is_its_own_breakpoint_and_never_sent_as_a_field():
+    from weird_ai_bench.llm import cache_marked
+    msg = {"role": "user", "content": "SETUP...SONGS", "cache_prefix": len("SETUP...")}
+    claude = cache_marked("anthropic/claude-opus-5", [msg])[0]
+    assert [p["text"] for p in claude["content"]] == ["SETUP...", "SONGS"]
+    assert all("cache_control" in p for p in claude["content"])
+    other = cache_marked("openai/gpt-5", [msg])[0]
+    assert other == {"role": "user", "content": "SETUP...SONGS"}  # byte-identical, no hint field
+    assert "cache_prefix" not in claude
