@@ -33,10 +33,19 @@ original lyrics: each parody line links to the moment in the official recording
 instead, and lines the originality check flags as close to the original are left
 out. Profanity and slurs are starred out.
 
-That section is generated, not hand-edited: `docs/local/build_readme.py
-README.md` (the picks and the `readme_results.md` template live in
-`docs/local/`). Rebuild it rather than editing it, keep it plain Markdown with
-no raw HTML, and keep the original-lyrics rule when changing the generator. The rest of the README is written by hand.
+Inside it, the in-progress block between `<!-- progress:start -->` and
+`<!-- progress:end -->` is generated: `docs/local/build_readme.py <run dir>`
+fills `docs/local/readme_progress.md` with the run's numbers, table and chart,
+and takes its prose from `docs/local/progress_prose.md`, which the owner writes
+(`docs/local/draft_prose.py` can ask a model for a first draft to edit). Rebuild
+that block rather than editing it. The initial benchmark's results below it are
+hand-edited; the generator that first wrote them is gone, so don't regenerate
+them. Keep the whole section plain Markdown with no raw HTML, and keep the
+original-lyrics rule. The rest of the README is written by hand.
+
+`docs/local/check_private.py` runs as a local pre-commit hook. It blocks private
+files, any line of original lyrics from a local template, and private song or
+artist names outside the results markers.
 
 ## Tests
 

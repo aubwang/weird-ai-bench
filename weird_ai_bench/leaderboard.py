@@ -297,6 +297,20 @@ def panel_for(judges: list[str], a: dict, b: dict) -> tuple[list[str], bool]:
     return (free, False) if free else (judges, True)
 
 
+def capped(panel: list[str], k: int | None, a_id: str, b_id: str) -> list[str]:
+    """At most `k` of a pair's eligible judges, picked by a hash of the pair and judge names.
+
+    The pick depends on nothing else, so a schedule that grows later, or reruns in another
+    order, keeps each pair's judges and its cached verdicts. Over many pairs each eligible
+    judge is picked about equally often.
+    """
+    if k is None or len(panel) <= k:
+        return panel
+    ids = "|".join(sorted((a_id, b_id)))
+    ranked = sorted(panel, key=lambda j: hashlib.sha256(f"{ids}|{j}".encode()).hexdigest())
+    return [j for j in panel if j in ranked[:k]]
+
+
 def adherence_by_model(runs: list[dict]) -> dict[str, float]:
     """Each model's mean automated adherence over the runs it sang in; missing lines count as 0."""
     acc: dict[str, list[float]] = defaultdict(list)
@@ -345,16 +359,24 @@ def diagnostics_by_model(runs: list[dict]) -> dict:
 def leaderboard(runs: list[dict], client, judge_model: str | list[str], cache_path: Path,
                 max_pairs: int | None = 200, seed: int = 0, mix: bool = False,
                 log=None, bootstrap: int = 200, prior_sd: float = 1.0,
-                pairs: list[tuple[str, str]] | None = None, cached_only: bool = False) -> dict:
+                pairs: list[tuple[str, str]] | None = None, cached_only: bool = False,
+                max_judges: int | None = None,
+                keep_pairs: list[tuple[str, str]] | None = None) -> dict:
     """Rank models from pairwise judgments within groups of identical settings.
 
     `judge_model` is one judge, or a panel. With a panel, each pair is judged by the members that
-    share no family with its singers, and the pair's score is their average.
+    share no family with its singers, and the pair's score is their average. `max_judges` caps
+    how many of those judge each pair (see `capped`).
     `pairs` fixes the schedule as run-id pairs (each within one group) instead of selecting one;
-    use it for a schedule planned in stages. With `cached_only`, nothing is judged: a judgment
+    use it for a schedule planned in stages. `keep_pairs` is an earlier stage's schedule to build
+    on: those pairs stay, and balanced new pairs fill up to `max_pairs` in total, counting the kept
+    ones, so adding songs or samples later never drops a paid judgment. The schedule used comes
+    back as "schedule". With `cached_only`, nothing is judged: a judgment
     missing from the cache drops that judge from the pair, and a pair left with no judge is skipped.
     """
     log = log or (lambda m: None)
+    if max_judges is not None and max_judges < 1:
+        raise ValueError("max_judges must be at least 1")
     judges = [judge_model] if isinstance(judge_model, str) else list(dict.fromkeys(judge_model))
     cache: dict[tuple, dict] = {}
     if cache_path.exists():
@@ -421,9 +443,33 @@ def leaderboard(runs: list[dict], client, judge_model: str | list[str], cache_pa
             raise ValueError("a scheduled pair crosses groups of different settings")
         pairs = chosen
     else:
+        kept = []
+        if keep_pairs:
+            index = {r["id"]: i for i, r in enumerate(runs)}
+            group_of = {i: g for g, idxs in groups.items() for i in idxs}
+            known = {frozenset(c) for c in candidates}
+            missing = 0
+            for a_id, b_id in keep_pairs:
+                if a_id not in index or b_id not in index:
+                    missing += 1
+                    continue
+                i, j = index[a_id], index[b_id]
+                if group_of[i] != group_of[j]:
+                    raise ValueError("a kept pair crosses groups of different settings")
+                if frozenset((i, j)) in known and (i, j) not in kept and (j, i) not in kept:
+                    kept.append((i, j))
+                    counts[i] += 1
+                    counts[j] += 1
+            if missing:
+                warnings.append(f"{missing} kept pairs name runs that aren't loaded, so they were dropped.")
+            if max_pairs is not None and len(kept) > max_pairs:
+                warnings.append(f"Kept all {len(kept)} earlier pairs, more than --max-pairs {max_pairs}.")
+        taken = {frozenset(p) for p in kept}
+        fresh = [c for c in candidates if frozenset(c) not in taken]
+        room = None if max_pairs is None else max(0, max_pairs - len(kept))
         # Select without observing outcomes or cache availability. Prioritizing free
         # forfeits gives failed runs far more opponents than successful runs.
-        pairs = _balanced(candidates, max_pairs, counts)
+        pairs = kept + _balanced(fresh, room, counts)
     # Judge each group's pairs together: they share a judging setup, which providers cache
     # for only minutes. Judgments are independent, so the order changes nothing else.
     group_order = {i: n for n, idxs in enumerate(groups.values()) for i in idxs}
@@ -451,6 +497,7 @@ def leaderboard(runs: list[dict], client, judge_model: str | list[str], cache_pa
                     if idx not in input_hashes:
                         input_hashes[idx] = _judge_input_hash(runs[idx])
                 panel, forced = panel_for(judges, a, b)
+                panel = capped(panel, max_judges, a["id"], b["id"])
                 conflicted += forced
                 recs = []
                 for judge in panel:
@@ -544,6 +591,7 @@ def leaderboard(runs: list[dict], client, judge_model: str | list[str], cache_pa
             "judge": judges[0] if len(judges) == 1 else "panel: " + ", ".join(judges),
             "judges": judges, "pairs": len(comparisons), "table": table, "records": records,
             "scheduled_pairs": len(pairs), "skipped_pairs": skipped,
+            "schedule": [[runs[i]["id"], runs[j]["id"]] for i, j in pairs],
             "unresolved_judgments": unresolved, "by_judge": by_judge,
             "new_judging_cost": {
                 "known_cost": sum(r.get("known_cost", 0) for r in new_records),
@@ -556,7 +604,10 @@ def leaderboard(runs: list[dict], client, judge_model: str | list[str], cache_pa
 
 
 def _bootstrap(runs, groups, comparisons, pair_idx, strengths, reps, seed, prior_sd):
-    """2.5 and 97.5 percentiles of each model's strength, resampling runs within each group."""
+    """2.5 and 97.5 percentiles of each model's strength, resampling runs within each group.
+
+    Each model's percentiles come from the draws in which at least one of its songs was compared.
+    """
     if not reps or not comparisons:
         return {}
     rng = random.Random(f"{seed}-bootstrap")
@@ -568,8 +619,13 @@ def _bootstrap(runs, groups, comparisons, pair_idx, strengths, reps, seed, prior
                 counts[i] += 1
         w = [counts[i] * counts[j] for i, j in pair_idx]
         fit = fit_additive_bt(comparisons, w, prior_sd)
+        # A model with no compared song in this draw has only the prior's mean, which says
+        # nothing about its strength; with one song per model per group that happens often
+        # enough to pin intervals to the mean. Its interval uses the draws that saw it.
+        seen = {m for (wa, wb, _), wt in zip(comparisons, w) if wt for m in (*wa, *wb)}
         for m in strengths:
-            draws[m].append(fit.get(m, 0.0))  # no data in this draw: the prior's mean
+            if m in seen and m in fit:
+                draws[m].append(fit[m])
     return {m: (_percentile(draws[m], 0.025), _percentile(draws[m], 0.975))
             for m in strengths if draws[m]}
 

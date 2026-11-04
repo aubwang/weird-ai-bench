@@ -30,6 +30,47 @@ The benchmark attempts to evaluate the following criteria:
 **Coherence and response.** A premise needs to survive across verses, and a second singer needs to do something with the first singer's part. The runner gives each singer a separate conversation and passes earlier lyrics forward. The published experiment uses one model for both roles; mixed-model lineups are also supported by the CLI.
 
 <!-- results:start -->
+<!-- progress:start -->
+## Second benchmark (in progress)
+
+![Preliminary parody index for 15 models, with wide uncertainty intervals.](docs/img/progress-index.png)
+
+These results are from a preliminary, limited `n` run. As the sample size is small, most of the models' CIs overlap. However, it's already clear  that GPT-6 Astra and Claude Opus 5.5 are a cut above the rest of the models in this benchmark.
+
+For the full run, I'm planning on expanding this to four songs, with 2 parodies generated per model per song. I am also considering adding a second scenario to address the potential OpenAI/Anthropic model self-bias to Sam/Dario confound. My current idea for the second scenario is `Boomer vs. Zoomer`.
+
+So far I've run 15 models on two songs with one scenario. In total, that's: **30 attempted songs, 30 songs completed, 70 song pairs compared, and $12.79 in API costs.**
+
+The songs are:
+
+- [APT.](https://www.youtube.com/watch?v=ekr2nIex040) — ROSÉ and Bruno Mars
+- [I Had Some Help](https://www.youtube.com/watch?v=PCBZOSM8h5U) — Post Malone (feat. Morgan Wallen)
+
+For the scenario, Singer 1 plays Dario Amodei and Singer 2 plays Sam Altman. They sing to each other as the heads of rival AI companies, each pushing their own idea of how AI should be built and released.
+
+Every model wrote one parody of each song per scenario and wrote both singers' parts. Each pair of songs got one judge from Gemini 4 Argon, GPT-6 Astra or Opus 5.5, never one from the same company as either song's writer, and was judged in both orders. If the verdict flipped when the order was swapped, it counted as a tie; that happened on 19% of pairs. Muse Wonder and Qwen3.8 Max were pulled from OpenRouter the day I ran this, before they wrote anything, so Muse Spark Open and Qwen3.8 2.4T took their spots.
+
+| # | Model | Index | 95% interval | Meter | Cost per song |
+|--:|---|--:|--:|--:|--:|
+| 1 | GPT-6 Astra | 83 | 64–90 | 80% | $0.689 |
+| 2 | Claude Opus 5.5 | 81 | 62–88 | 97% | $0.270 |
+| 3 | GPT-6.1 Sol | 64 | 46–78 | 100% | $0.114 |
+| 4 | Gemini 4 Argon | 60 | 43–78 | 100% | $0.608 |
+| 5 | Claude Sonnet 5.5 | 59 | 42–76 | 95% | $0.220 |
+| 6 | Qwen3.8 2.4T | 53 | 36–74 | 100% | $0.219 |
+| 7 | Grok 4.7 | 52 | 17–83 | 98% | $0.551 |
+| 8 | Kimi K3.1 Pro | 49 | 33–70 | 97% | $0.175 |
+| 9 | Gemini 3.8 Flash | 46 | 18–79 | 93% | $0.469 |
+| 10 | GPT-6.1 Terra | 41 | 26–62 | 100% | $0.058 |
+| 11 | Muse Spark Open | 37 | 19–63 | 100% | $0.198 |
+| 12 | GLM-5.3 | 36 | 21–56 | 100% | $0.051 |
+| 13 | DeepSeek V4.1 Flash | 29 | 15–53 | 98% | $0.020 |
+| 14 | GPT-6 Luna | 28 | 16–45 | 100% | $0.011 |
+| 15 | Claude Haiku 5.5 | 27 | 11–54 | 98% | $0.019 |
+
+The index and meter work the same way as in the initial benchmark below. With only a few comparisons per model the intervals are really wide right now, so models whose bars overlap aren't actually ranked against each other yet.
+<!-- progress:end -->
+
 ## Results
 
 For the initial benchmark, I used twelve models, six songs, two scenarios per song, and two song generations per scenario. 
@@ -176,10 +217,7 @@ In the main evaluation, no judge saw a pair containing a song from its own compa
 - **Evaluation.** All judges and excerpt readers were language models. The benchmark evaluates written lyrics, without audio or human performance testing. Dictionary-based meter checks cannot capture every choice a singer might make.
 - **Reproducibility.** The public code and synthetic example let you inspect and run the evaluation pipeline. The original lyrics, real-song templates, and the generated songs are not available in this repo.
 
-
-
-
-
+<!-- results:end -->
 
 ## How the benchmark code works
 
