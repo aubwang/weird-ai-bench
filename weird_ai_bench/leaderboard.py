@@ -424,6 +424,10 @@ def leaderboard(runs: list[dict], client, judge_model: str | list[str], cache_pa
         # Select without observing outcomes or cache availability. Prioritizing free
         # forfeits gives failed runs far more opponents than successful runs.
         pairs = _balanced(candidates, max_pairs, counts)
+    # Judge each group's pairs together: they share a judging setup, which providers cache
+    # for only minutes. Judgments are independent, so the order changes nothing else.
+    group_order = {i: n for n, idxs in enumerate(groups.values()) for i in idxs}
+    pairs = sorted(pairs, key=lambda p: group_order.get(p[0], 0))
 
     comparisons, records, pair_idx = [], [], []
     conflicted, shared, agreed, skipped = 0, 0, 0, 0

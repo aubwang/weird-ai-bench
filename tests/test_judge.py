@@ -279,3 +279,15 @@ def test_names_the_setup_gives_everyone_stay_visible():
 def test_newer_families_are_redacted():
     r = make(["moonshotai/kimi-k3", "z-ai/glm-5"])
     assert redact_names("Kimi and GLM-5 sang", r) == "Singer 1 and Singer 2 sang"
+
+
+def test_pairwise_marks_the_setup_shared_by_every_pair():
+    a, b = make(), make()
+    c = ScriptedClient(['{"winner": 1}', '{"winner": 2}'])
+    pairwise(a, b, c, "mistralai/mistral-large")
+    for call in c.calls:
+        m = call["messages"][0]
+        shared = m["content"][:m["cache_prefix"]]
+        assert "SONG 1:" not in shared and shared.endswith("\n\n") and "<setup>" in shared
+    # Both orders send the same shared setup, so the second call can reuse the first's cache.
+    assert len({call["messages"][0]["content"][:call["messages"][0]["cache_prefix"]] for call in c.calls}) == 1

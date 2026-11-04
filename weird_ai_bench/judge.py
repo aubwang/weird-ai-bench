@@ -357,9 +357,11 @@ def pairwise(a: dict, b: dict, client, judge_model: str) -> dict:
                 ask += ("Each song had its own stated criteria.\n"
                         "SONG 1 criteria:\n" + definitions(crit1) + "\n\n"
                         "SONG 2 criteria:\n" + definitions(crit2) + "\n\n")
+        shared = 0  # characters every pair in this group sends identically, for caching
         if ctx1 == ctx2:
-            prompt = (f"{ctx1}\n\nHere are two songs written under the same setup. {ask}"
-                      f"SONG 1:\n\n{_sheet(first)}\n\nSONG 2:\n\n{_sheet(second)}\n\n")
+            prompt = f"{ctx1}\n\nHere are two songs written under the same setup. {ask}"
+            shared = len(prompt)
+            prompt += f"SONG 1:\n\n{_sheet(first)}\n\nSONG 2:\n\n{_sheet(second)}\n\n"
         else:
             prompt = (f"Here are two songs, each written under its own setup. {ask}"
                       f"SONG 1 was written under this setup:\n\n{ctx1}\n\n"
@@ -378,7 +380,10 @@ def pairwise(a: dict, b: dict, client, judge_model: str) -> dict:
         response["attempted"] = True
         vote = None
         try:
-            comp = client.complete(judge_model, [{"role": "user", "content": prompt}])
+            message = {"role": "user", "content": prompt}
+            if shared:
+                message["cache_prefix"] = shared
+            comp = client.complete(judge_model, [message])
         except LLMError as exc:
             response["error"] = str(exc)
             response["error_kind"] = "api"

@@ -27,6 +27,8 @@ class Completion:
     cost: float | None = None
     latency_s: float = 0.0
     raw_finish: str | None = None
+    reasoning_tokens: int | None = None  # when the provider reports them
+    cached_tokens: int | None = None
 
 
 class LLMError(RuntimeError):
@@ -34,6 +36,37 @@ class LLMError(RuntimeError):
 
 
 _RETRYABLE = (408, 429, 500, 502, 503, 504)
+_EPHEMERAL = {"type": "ephemeral"}
+
+
+def cache_marked(model: str, messages: list[dict]) -> list[dict]:
+    """Messages as sent: prompt-cache breakpoints for Anthropic models, plain text otherwise.
+
+    Caching changes billing, not what the model reads: the text is identical either way.
+    OpenAI, Google and most other providers cache repeated prefixes automatically. Anthropic
+    caches only up to explicit breakpoints, so mark the system prompt, the end of the
+    conversation so far (the next turn reuses it), and any shared prefix a caller declares
+    with an optional "cache_prefix" (a character count) on a message, such as the judge's
+    setup that every pair in a group shares. Anthropic allows four breakpoints; this uses
+    at most three.
+    """
+    anthropic = family(model) == "anthropic"
+    out = []
+    last = len(messages) - 1
+    for i, m in enumerate(messages):
+        m = {k: v for k, v in m.items() if k != "cache_prefix"}
+        text = m.get("content")
+        if not anthropic or not isinstance(text, str) or not text:
+            out.append(m)
+            continue
+        cut = messages[i].get("cache_prefix")
+        parts = ([{"type": "text", "text": text[:cut], "cache_control": _EPHEMERAL},
+                  {"type": "text", "text": text[cut:]}]
+                 if isinstance(cut, int) and 0 < cut < len(text) else [{"type": "text", "text": text}])
+        if (i == 0 and m.get("role") == "system") or i == last:
+            parts[-1] = {**parts[-1], "cache_control": _EPHEMERAL}
+        out.append({**m, "content": parts})
+    return out
 
 
 def _retry_after(value: str | None) -> float | None:
@@ -75,7 +108,7 @@ class OpenRouterClient:
     def complete(self, model: str, messages: list[dict]) -> Completion:
         body: dict = {
             "model": model,
-            "messages": messages,
+            "messages": cache_marked(model, messages),
             "max_tokens": self.max_tokens,
             "usage": {"include": True},
         }
@@ -133,6 +166,8 @@ class OpenRouterClient:
                                 cost=usage.get("cost"),
                                 latency_s=time.monotonic() - t0,
                                 raw_finish=choice.get("finish_reason"),
+                                reasoning_tokens=(usage.get("completion_tokens_details") or {}).get("reasoning_tokens"),
+                                cached_tokens=(usage.get("prompt_tokens_details") or {}).get("cached_tokens"),
                             )
                 elif r.status_code in _RETRYABLE:
                     last_err = f"HTTP {r.status_code}: {r.text[:300]}"
