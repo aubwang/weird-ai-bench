@@ -36,6 +36,34 @@ def load_runs(paths: list[str]) -> list[dict]:
     return runs
 
 
+# Runs saved before failures recorded their kind: recognisable service errors are the
+# provider's; anything else keeps the old rule and counts against the model.
+_PROVIDER_FAILURE_TEXT = ("HTTP 4", "HTTP 5", "network error", "upstream_status", "high demand",
+                          "'code': 5", "'code': 429", "'code': 408", "rate limit", "overloaded")
+
+
+def failure_kind(run: dict) -> str | None:
+    """None for a finished song, else "provider" or "model" (see llm.LLMError)."""
+    failed = run.get("failed")
+    if not failed:
+        return None
+    if failed.get("kind") in ("provider", "model"):
+        return failed["kind"]
+    error = failed.get("error") or ""
+    return "provider" if any(t in error for t in _PROVIDER_FAILURE_TEXT) else "model"
+
+
+def split_provider_failures(runs: list[dict]) -> tuple[list[dict], list[dict]]:
+    """(runs that count, songs the provider failed). The second are left out of every ranking."""
+    keep = [r for r in runs if failure_kind(r) != "provider"]
+    return keep, [r for r in runs if failure_kind(r) == "provider"]
+
+
+def _provider_warning(dropped: list[dict]) -> str:
+    return (f"Left out {len(dropped)} song(s) the provider failed (not the model): "
+            + ", ".join(r["id"] for r in dropped) + ". Rerun them to fill the gap.")
+
+
 def group_key(run: dict) -> tuple:
     c = run["config"]
     template = json.dumps(asdict(result_spec(run)), sort_keys=True)
@@ -111,6 +139,7 @@ def gate_stats(runs: list[dict]) -> list[dict]:
     acc: dict[tuple, dict] = defaultdict(lambda: {"adherence": [], "turns": 0, "first": 0,
                                                     "final": 0, "retries": 0, "songs": 0,
                                                     "failed": 0, "judge": []})
+    runs, _ = split_provider_failures(runs)
     for r in runs:
         cfg = r["config"]
         spec = r.get("spec") or cfg.get("spec")
@@ -395,6 +424,9 @@ def leaderboard(runs: list[dict], client, judge_model: str | list[str], cache_pa
                             c["a_input_sha256"], c["b_input_sha256"])] = c
 
     warnings: list[str] = []
+    runs, dropped = split_provider_failures(runs)
+    if dropped:
+        warnings.append(_provider_warning(dropped))
     groups: dict[tuple, list[int]] = defaultdict(list)
     for i, r in enumerate(runs):
         groups[("all",) if mix else group_key(r)].append(i)
@@ -600,7 +632,8 @@ def leaderboard(runs: list[dict], client, judge_model: str | list[str], cache_pa
             "flip_rate": (sum(not c for c in judged) / len(judged)) if judged else None,
             "judge_agreement": agreed / shared if shared else None,
             "warnings": warnings,
-            "forfeits": sum(r.get("judge") == "forfeit" for r in records)}
+            "forfeits": sum(r.get("judge") == "forfeit" for r in records),
+            "provider_failures": [r["id"] for r in dropped]}
 
 
 def _bootstrap(runs, groups, comparisons, pair_idx, strengths, reps, seed, prior_sd):

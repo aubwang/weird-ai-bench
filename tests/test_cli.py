@@ -30,7 +30,7 @@ def test_matrix_gives_each_sample_its_own_seed(monkeypatch, tmp_path):
 class FailingClient(ScriptedClient):
     def complete(self, model, messages):
         if len(self.calls) >= 1:
-            raise LLMError(f"{model} used all tokens before answering")
+            raise LLMError(f"{model} used all tokens before answering", kind="model")
         return super().complete(model, messages)
 
 
@@ -43,3 +43,21 @@ def test_failed_songs_are_saved(monkeypatch, tmp_path, capsys):
     assert run["scores"]["strict_pass"] is False
     assert main(["stats", str(tmp_path)]) == 0
     assert "failed" in capsys.readouterr().out
+    assert run["failed"]["kind"] == "model"
+
+
+class OverloadedClient(ScriptedClient):
+    def complete(self, model, messages):
+        if len(self.calls) >= 1:
+            raise LLMError(f"{model}: HTTP 503: overloaded")  # the client's default kind
+        return super().complete(model, messages)
+
+
+def test_provider_failures_are_saved_but_left_out_of_rankings(monkeypatch, tmp_path, capsys):
+    monkeypatch.setattr("weird_ai_bench.cli._client", lambda args: OverloadedClient())
+    assert main(["run", "--model", "a/x", "--model", "b/y", "--track", "freeform",
+                 "--out", str(tmp_path)]) == 1
+    (run,) = [json.loads(p.read_text()) for p in tmp_path.glob("*.json")]
+    assert run["failed"]["kind"] == "provider"
+    from weird_ai_bench.leaderboard import gate_stats
+    assert gate_stats([run]) == []

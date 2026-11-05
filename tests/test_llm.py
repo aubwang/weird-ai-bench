@@ -148,3 +148,25 @@ def test_shared_prefix_is_its_own_breakpoint_and_never_sent_as_a_field():
     other = cache_marked("openai/gpt-5", [msg])[0]
     assert other == {"role": "user", "content": "SETUP...SONGS"}  # byte-identical, no hint field
     assert "cache_prefix" not in claude
+
+
+OVERLOADED = {"error": {"message": "The system is currently experiencing high demand", "code": 502}}
+REFUSED = {"choices": [{"message": {"content": ""}, "finish_reason": "content_filter"}]}
+EMPTY = {"choices": [{"message": {"content": ""}, "finish_reason": "stop"}]}
+OUT_OF_TOKENS = {"choices": [{"message": {"content": ""}, "finish_reason": "length"}]}
+
+
+@pytest.mark.parametrize("replies, kind", [
+    ([(200, OVERLOADED, None)] * 5, "provider"),         # overload outlasts the retries
+    ([(503, {"error": "busy"}, None)] * 5, "provider"),
+    ([(404, {"error": "upstream_status"}, None)], "provider"),  # model gone
+    ([(200, REFUSED, None)], "model"),
+    ([(200, OUT_OF_TOKENS, None)], "model"),
+    ([(200, EMPTY, None)] * 5, "model"),
+    ([(503, {"error": "busy"}, None)] * 4 + [(200, EMPTY, None)], "model"),  # last attempt decides
+])
+def test_errors_say_whether_the_provider_or_the_model_failed(monkeypatch, replies, kind):
+    client, _, _ = _scripted_http(monkeypatch, replies)
+    with pytest.raises(LLMError) as err:
+        client.complete("test/model", [])
+    assert err.value.kind == kind

@@ -660,6 +660,23 @@ def test_intervals_ignore_draws_that_left_a_model_out(tmp_path, monkeypatch):
     assert star["elo_lo"] > 1000  # not pinned to the prior's mean by draws without it
 
 
+def test_provider_failures_are_left_out_not_forfeited(tmp_path, monkeypatch):
+    a_wins(monkeypatch)
+    runs = [fake_run(f"r{i}", [f"m{i}/x"] * 2) for i in range(3)]
+    runs.append(fake_run("busy", ["m9/x"] * 2, failed="m9/x: HTTP 503: overloaded"))
+    runs[-1]["failed"]["kind"] = "provider"
+    runs.append(fake_run("legacy", ["m8/x"] * 2,
+                         failed="m8/x: {'message': 'high demand', 'code': 502}"))  # no kind saved
+    runs.append(fake_run("refused", ["m7/x"] * 2, failed="m7/x: empty response (finish_reason=content_filter)"))
+    out = leaderboard(runs, None, "j/judge", tmp_path / "c.jsonl", max_pairs=None, bootstrap=0)
+    assert out["provider_failures"] == ["busy", "legacy"]
+    assert any("provider failed" in w for w in out["warnings"])
+    models = {r["model"] for r in out["table"]}
+    assert "m9/x" not in models and "m8/x" not in models
+    assert "m7/x" in models and out["forfeits"] == 3  # a model failure still loses its pairs
+    assert [lb.failure_kind(r) for r in runs] == [None, None, None, "provider", "provider", "model"]
+
+
 def test_table_reports_meter_beside_elo(tmp_path, monkeypatch):
     a_wins(monkeypatch)
     runs = [fake_run("r0", ["a/x", "a/x"]), fake_run("r1", ["b/y", "b/y"])]
