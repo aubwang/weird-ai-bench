@@ -403,11 +403,15 @@ class Song:
         self.current = None
         return self._result(time.time() - self.started)
 
-    def failed_result(self, error: str) -> dict:
-        """The result of a run that stopped early: what was written, with the rest scored 0."""
+    def failed_result(self, error: str, kind: str = "model") -> dict:
+        """The result of a run that stopped early: what was written, with the rest scored 0.
+
+        `kind` is "provider" when the service failed (the leaderboard leaves the song out and
+        it can be rerun) or "model" when the model did (the song forfeits its pairs).
+        """
         elapsed = time.time() - self.started if self.started else 0.0
         result = self._result(elapsed, failed=True)
-        result["failed"] = {"error": error, "section": self.current}
+        result["failed"] = {"error": error, "section": self.current, "kind": kind}
         return result
 
     def _intended_author(self, key: str):

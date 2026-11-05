@@ -109,8 +109,9 @@ def cmd_run(args) -> int:
         try:
             result = song.run()
         except LLMError as e:
-            # Save what was written, so failures count against the model in stats.
-            jp, _ = save(song.failed_result(str(e)), args.out)
+            # Save what was written. A model failure counts against the model; a provider
+            # failure is kept for the record but left out of rankings, so it can be rerun.
+            jp, _ = save(song.failed_result(str(e), e.kind), args.out)
             _log(f"error: {e}\nsaved the partial song to {jp}")
             return 1
         # Preserve paid generation even if optional judging fails.
@@ -135,7 +136,7 @@ def _run_one(args, cfg: RunConfig) -> dict:
     try:
         result = song.run()
     except LLMError as e:
-        result = song.failed_result(str(e))
+        result = song.failed_result(str(e), e.kind)
         save(result, args.out)
         return result
     save(result, args.out)

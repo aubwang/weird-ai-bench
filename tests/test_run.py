@@ -207,7 +207,7 @@ def test_failed_run_is_kept_with_zeros_for_the_rest(fail_on, section, written, a
     with pytest.raises(LLMError):
         song.run()
     r = song.failed_result("boom")
-    assert r["failed"] == {"error": "boom", "section": section}
+    assert r["failed"] == {"error": "boom", "section": section, "kind": "model"}
     assert not r["scores"]["strict_pass"]
     assert [k for k, p in r["parts"].items() if p["lines"]] == written
     assert all(p["author"] for p in r["parts"].values())

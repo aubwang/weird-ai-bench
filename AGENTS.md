@@ -99,8 +99,15 @@ Tests use `ScriptedClient`, so they don't need the network.
   lines as performed, so a repeated chorus counts for its writer and a
   self-duet's strength is its model's. It's a MAP fit with a N(0, 1) prior, and
   the intervals come from resampling runs within each group.
-- **Failures count.** A song whose API calls failed is saved with what was
-  written; it scores 0 on the missing parts and forfeits its leaderboard pairs.
+- **Model failures count; provider failures don't.** A song whose model
+  refused, spent every token before answering, or kept replying with nothing is
+  saved with what was written; it scores 0 on the missing parts and forfeits
+  its leaderboard pairs. When the service fails instead (overload, 5xx, rate
+  limits that outlast the retries, network errors, a model that's been pulled),
+  the song is saved with `failed.kind: provider`, left out of `stats` and
+  `leaderboard`, and can be rerun. The client decides the kind where the error
+  happens; older runs without one count against the model unless their error
+  text is a recognisable service error.
 - **Grouping is by content.** Leaderboard groups compare the template,
   scenario text, reference lyrics, and supplied sections by content, never by
   file name or id. Settings that change outcomes (tolerance, temperature,

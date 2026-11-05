@@ -32,7 +32,17 @@ class Completion:
 
 
 class LLMError(RuntimeError):
-    pass
+    """A failed model call. `kind` says whose failure it was.
+
+    "provider": the service didn't deliver (overload, 5xx, rate limits that outlast the
+    retries, network errors, an unavailable model, account or request errors). The benchmark
+    doesn't hold these against the model. "model": the model answered but produced nothing
+    usable (a refusal, every token spent before answering, empty replies).
+    """
+
+    def __init__(self, message: str, kind: str = "provider"):
+        super().__init__(message)
+        self.kind = kind
 
 
 _RETRYABLE = (408, 429, 500, 502, 503, 504)
@@ -124,11 +134,13 @@ class OpenRouterClient:
         }
         delay, limit_delay = 2.0, 5.0
         last_err = ""
+        last_kind = "provider"
         attempt = limited = 0
         while True:
             t0 = time.monotonic()
             wait = None  # seconds a rate limit asked for, when it said
             rate_limited = False
+            last_kind = "provider"  # until this attempt shows the model answered with nothing
             try:
                 r = self._http.post(self.url, json=body, headers=headers)
             except httpx.HTTPError as e:
@@ -151,12 +163,14 @@ class OpenRouterClient:
                         if not text.strip() and choice.get("finish_reason") == "length":
                             raise LLMError(
                                 f"{model} used all {self.max_tokens} tokens before answering "
-                                f"(likely reasoning); raise --max-tokens or lower --effort")
+                                f"(likely reasoning); raise --max-tokens or lower --effort", kind="model")
                         if not text.strip() and choice.get("finish_reason") == "content_filter":
                             # A refusal repeats for the same request; retrying only spends money.
-                            raise LLMError(f"{model}: empty response (finish_reason=content_filter)")
+                            raise LLMError(f"{model}: empty response (finish_reason=content_filter)",
+                                           kind="model")
                         if not text.strip():
                             last_err = f"empty response (finish_reason={choice.get('finish_reason')})"
+                            last_kind = "model"
                         else:
                             return Completion(
                                 text=text,
@@ -189,7 +203,7 @@ class OpenRouterClient:
             attempt += 1
             time.sleep(delay + random.random())
             delay *= 2
-        raise LLMError(f"{model}: {last_err}")
+        raise LLMError(f"{model}: {last_err}", kind=last_kind)
 
 
 @dataclass
