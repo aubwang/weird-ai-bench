@@ -84,12 +84,15 @@ Tests use `ScriptedClient`, so they don't need the network.
   4-grams from the reference lyrics fails the `originality` gate and scores 0,
   since the reference lines pass the meter checks by construction.
 - **Judging is blind.** The judge sees "Singer 1", "Singer 2", and so on, and
-  model, persona, and family names inside the lyrics are redacted to match. It
-  should come from a different model family than the singers. The judge also
-  sees the reference lyrics, since it rates parody craft, and the automated
-  check results, since a model can't count syllables reliably. The leaderboard
-  judges each pair twice with the order swapped, and a disagreement counts as a
-  tie. When every family is also a contestant, use a panel of judges from
+  model, persona, and family names inside the lyrics are redacted to match. In
+  a pair, both songs are redacted the same way: company names of either song's
+  family become `[AI name]` on both sides, since redacting "Google" only in
+  Google's own song would garble it and hint at its author. It should come from
+  a different model family than the singers. The judge also sees the reference
+  lyrics, since it rates parody craft, and the automated check results, since a
+  model can't count syllables reliably. The leaderboard judges each pair twice
+  with the order swapped. Opposite wins (a flip) count as a tie; a win and a tie
+  count 0.75, since that verdict still leans one way. When every family is also a contestant, use a panel of judges from
   several families: each pair skips the judges from its singers' families.
   Meter is reported beside the judged rating, not blended into it. Cached
   judgments are keyed by a hash of what the judge saw, so a rescored run is

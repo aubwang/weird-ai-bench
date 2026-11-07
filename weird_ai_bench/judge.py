@@ -70,15 +70,31 @@ FAMILY_ALIASES = {
 _TAIL = r"(?:[ -]?\d(?:\w|\.(?=\d))*)?(?:-[A-Za-z0-9](?:\w|\.(?=\d))*)*"
 
 
-def redact_names(text: str, result: dict, keep: tuple[str, ...] = ()) -> str:
+NEUTRAL_NAME = "[AI name]"
+
+
+def redact_names(text: str, result: dict, keep: tuple[str, ...] = (),
+                 pair: tuple[str, ...] | None = None) -> str:
     """Replace singer personas, model names, and family names with "Singer N".
 
     Matching ignores case and respects word boundaries. A name that belongs to more than one
     singer becomes "a singer" rather than a guess, and "Singer N" itself is left alone, as is
     any string in `keep` (the song's title and artist, which may share a word with a model name).
+
+    `pair` is every model in both songs of a pairwise comparison. Then company and product
+    names ("Google", "ChatGPT") of any family in the pair become NEUTRAL_NAME in both songs, so
+    a word means the same thing on both sides: redacting "Google" only in Google's own song
+    would garble that song alone and hint at who wrote it. Personas and exact model names still
+    become "Singer N".
     """
     cfg = result["config"]
     owners: dict[str, tuple[set[int], bool]] = {}  # lowercase name -> (singers, takes a version tail)
+    neutral: set[str] = set()
+    if pair is not None:
+        for model in pair:
+            neutral.update(a.lower() for a in FAMILY_ALIASES.get(family(model), []))
+            if not any(model == m for m in cfg["models"]):  # the other song's exact model names
+                neutral.update(n.lower() for n in (model, display_name(model)) if len(n) >= 3)
 
     def add(name: str | None, singer: int, tail: bool) -> None:
         if name and len(name.strip()) >= 3:
@@ -91,7 +107,11 @@ def redact_names(text: str, result: dict, keep: tuple[str, ...] = ()) -> str:
         if i <= len(personas):
             add(personas[i - 1], i, False)
         for name in (model, display_name(model), *FAMILY_ALIASES.get(family(model), [])):
-            add(name, i, True)
+            if name.lower() not in neutral:
+                add(name, i, True)
+    for name in neutral:
+        if name not in owners:
+            owners[name] = (set(), True)  # no singer: NEUTRAL_NAME
     if not owners:
         return text
     names = sorted(owners, key=len, reverse=True)
@@ -106,12 +126,14 @@ def redact_names(text: str, result: dict, keep: tuple[str, ...] = ()) -> str:
             return m.group(0)
         i = next(i for i in range(len(names)) if m.group(i + 2) is not None)
         who = owners[names[i]][0]
-        return (f"Singer {next(iter(who))}" if len(who) == 1 else "a singer") + (m.group(len(names) + 2) or "")
+        label = (NEUTRAL_NAME if not who else f"Singer {next(iter(who))}" if len(who) == 1
+                 else "a singer")
+        return label + (m.group(len(names) + 2) or "")
 
     return pattern.sub(sub, text)
 
 
-def _context(result: dict) -> str:
+def _context(result: dict, pair: tuple[str, ...] | None = None) -> str:
     spec = result_spec(result)
     cfg = result["config"]
     chorus_note = {
@@ -140,7 +162,7 @@ def _context(result: dict) -> str:
     # redacting them only for their own family's songs would garble those setups and
     # reveal who wrote them.
     kept = (spec.title, spec.artist, *characters, *scenario_terms(result))
-    setup = redact_names("\n".join(x for x in setup if x.strip()), result, kept)
+    setup = redact_names("\n".join(x for x in setup if x.strip()), result, kept, pair)
     setup_note = (f"The singers were given this setup:\n<setup>\n{setup}\n</setup>" if setup
                   else "The singers were given no setup beyond the song itself.")
     refrains = []
@@ -165,7 +187,7 @@ def _context(result: dict) -> str:
                      if internal else "")
     craft_note = ""
     if cfg.get("guidance", "full") == "full" and spec.uses_craft_guidance:
-        craft_note = redact_names(describe_craft(spec), result, kept) + "\n\n"
+        craft_note = redact_names(describe_craft(spec), result, kept, pair) + "\n\n"
     ref = spec.reference_text()
     ref_note = (
         "Here are the original song's lyrics, for judging parody craft. Lines copied from the "
@@ -198,7 +220,7 @@ def _names_a_model(name: str, result: dict) -> bool:
     return probe != name
 
 
-def check_notes(result: dict) -> str:
+def check_notes(result: dict, pair: tuple[str, ...] | None = None) -> str:
     """The automated meter, rhyme, and copying misses in the generated sections, as plain text."""
     spec = result_spec(result)
     verification = result.get("verification") or {}
@@ -239,7 +261,7 @@ def check_notes(result: dict) -> str:
             notes.append(f"- {sec.label}: " + "; ".join(found) + ".")
     head = f"Automated checks: {ok} of {total} generated lines are within their syllable targets."
     text = head + ("\n" + "\n".join(notes) if notes else " No other misses.")
-    return redact_names(text, result, (spec.title, spec.artist, *scenario_terms(result)))
+    return redact_names(text, result, (spec.title, spec.artist, *scenario_terms(result)), pair)
 
 
 def _extract_json(text: str) -> dict:
@@ -289,19 +311,23 @@ def scenario_terms(result: dict) -> tuple[str, ...]:
     return tuple(n for n in names if re.search(rf"(?<!\w){re.escape(n)}(?!\w)", setup, re.I))
 
 
-def judge_inputs(result: dict) -> list:
-    """Everything the judge sees about one song, for cache keys."""
+def judge_inputs(result: dict, pair: tuple[str, ...] | None = None) -> list:
+    """Everything the judge sees about one song, for cache keys.
+
+    In a pairwise comparison, what the judge sees depends on the other song's models too
+    (see redact_names), so pass `pair`: songs whose text doesn't change keep their old key.
+    """
     crit = criteria(result)
     # Craft pairwise prompts include the definitions, not just their names.
     # Preserve the old representation for legacy prompts.
     definitions = crit if crit.get("parody_craft") != CRITERIA["parody_craft"] else list(crit)
-    return [_context(result), _sheet(result), definitions]
+    return [_context(result, pair), _sheet(result, pair), definitions]
 
 
-def _sheet(result: dict) -> str:
+def _sheet(result: dict, pair: tuple[str, ...] | None = None) -> str:
     sheet = redact_names(render_sheet(result, blind=True, show_scores=False), result,
-                         scenario_terms(result))
-    return f"{sheet}\n\n{check_notes(result)}" if result.get("verification") else sheet
+                         scenario_terms(result), pair)
+    return f"{sheet}\n\n{check_notes(result, pair)}" if result.get("verification") else sheet
 
 
 def blend_singability(scores: dict, adherence: dict[str, float]) -> None:
@@ -335,6 +361,26 @@ def rubric(result: dict, client, judge_model: str) -> dict:
     return out
 
 
+_VOTE = {"a": 1.0, "tie": 0.5, "b": 0.0}
+
+
+def score_from_votes(votes: list[str]) -> float:
+    """Song a's score from its two orders: the average, except that opposite wins are a tie.
+
+    a + a is 1, a + tie is 0.75, a + b (the verdict flipped with the order) is 0.5. A win in
+    one order and a tie in the other still leans toward the winner; only a full reversal
+    carries no preference.
+    """
+    if {votes[0], votes[1]} == {"a", "b"}:
+        return 0.5
+    return (_VOTE[votes[0]] + _VOTE[votes[1]]) / 2
+
+
+def pair_models(a: dict, b: dict) -> tuple[str, ...]:
+    """Every model in either song, in a fixed order, for pair-symmetric redaction."""
+    return tuple(sorted({*a["config"]["models"], *b["config"]["models"]}))
+
+
 def pairwise(a: dict, b: dict, client, judge_model: str) -> dict:
     """Compare both orders; an invalid or failed response leaves the pair unresolved."""
     votes = []
@@ -342,8 +388,9 @@ def pairwise(a: dict, b: dict, client, judge_model: str) -> dict:
     api_failed = False
     crit_b = criteria(b)
     weigh = ", ".join(k.replace("_", " ") for k in criteria(a) if k in crit_b)
+    pair = pair_models(a, b)
     for first, second, flip in ((a, b, False), (b, a, True)):
-        ctx1, ctx2 = _context(first), _context(second)
+        ctx1, ctx2 = _context(first, pair), _context(second, pair)
         ask = f"Which is the better parody overall, weighing {weigh}?\n\n"
         crit1, crit2 = criteria(first), criteria(second)
         if any(c.get("parody_craft") != CRITERIA["parody_craft"] for c in (crit1, crit2)):
@@ -361,13 +408,13 @@ def pairwise(a: dict, b: dict, client, judge_model: str) -> dict:
         if ctx1 == ctx2:
             prompt = f"{ctx1}\n\nHere are two songs written under the same setup. {ask}"
             shared = len(prompt)
-            prompt += f"SONG 1:\n\n{_sheet(first)}\n\nSONG 2:\n\n{_sheet(second)}\n\n"
+            prompt += f"SONG 1:\n\n{_sheet(first, pair)}\n\nSONG 2:\n\n{_sheet(second, pair)}\n\n"
         else:
             prompt = (f"Here are two songs, each written under its own setup. {ask}"
                       f"SONG 1 was written under this setup:\n\n{ctx1}\n\n"
-                      f"SONG 1:\n\n{_sheet(first)}\n\n"
+                      f"SONG 1:\n\n{_sheet(first, pair)}\n\n"
                       f"SONG 2 was written under this setup:\n\n{ctx2}\n\n"
-                      f"SONG 2:\n\n{_sheet(second)}\n\n")
+                      f"SONG 2:\n\n{_sheet(second, pair)}\n\n")
         prompt += 'Reply with JSON only: {"winner": 1 or 2 or "tie", "reason": "one sentence"}'
         response = {"order": [first["id"], second["id"]], "raw_text": None,
                     "reason": None, "cost": None, "error": None, "error_kind": None,
@@ -410,9 +457,7 @@ def pairwise(a: dict, b: dict, client, judge_model: str) -> dict:
         responses.append(response)
         votes.append(vote)
     resolved = all(v is not None for v in votes)
-    # Every disagreement, including a win paired with a tie, is a tie.
-    score_a = ({"a": 1.0, "tie": 0.5, "b": 0.0}[votes[0]]
-               if votes[0] == votes[1] else 0.5) if resolved else None
+    score_a = score_from_votes(votes) if resolved else None
     winner = ("a" if score_a > 0.5 else "b" if score_a < 0.5 else "tie") if resolved else None
     return {"a": a["id"], "b": b["id"], "winner": winner, "score_a": score_a,
             "status": "resolved" if resolved else "unresolved", "responses": responses,

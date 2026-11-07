@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from weird_ai_bench.judge import (JUDGE_VERSION, _context, _extract_json, _score, _sheet, check_notes, family_overlap,
+from weird_ai_bench.judge import (pair_models, JUDGE_VERSION, _context, _extract_json, _score, _sheet, check_notes, family_overlap,
                              pairwise, redact_names, rubric, same_family_warning)
 from weird_ai_bench.llm import Completion, LLMError, ScriptedClient
 from weird_ai_bench.orchestrate import RunConfig, Song, rescore
@@ -149,7 +149,10 @@ def test_pairwise_record():
     out = pairwise(a, b, ScriptedClient(['{"winner": 2}', '{"winner": 1}']), "mistralai/mistral-large")
     assert out["votes"] == ["b", "b"] and out["consistent"] is True and out["winner"] == "b"
     out = pairwise(a, b, ScriptedClient(['{"winner": 1}', '{"winner": "tie"}']), "mistralai/mistral-large")
-    assert out["winner"] == "tie" and out["score_a"] == 0.5
+    # A win in one order and a tie in the other still leans toward the winner.
+    assert out["winner"] == "a" and out["score_a"] == 0.75 and out["consistent"] is False
+    out = pairwise(a, b, ScriptedClient(['{"winner": "tie"}', '{"winner": 1}']), "mistralai/mistral-large")
+    assert out["winner"] == "b" and out["score_a"] == 0.25
 
 
 def test_extract_json_ignores_braces_in_prose():
@@ -291,3 +294,30 @@ def test_pairwise_marks_the_setup_shared_by_every_pair():
         assert "SONG 1:" not in shared and shared.endswith("\n\n") and "<setup>" in shared
     # Both orders send the same shared setup, so the second call can reuse the first's cache.
     assert len({call["messages"][0]["content"][:call["messages"][0]["cache_prefix"]] for call in c.calls}) == 1
+
+
+def test_pair_redaction_treats_both_songs_alike():
+    google = make(["google/gemini-x", "google/gemini-x"])
+    other = make(["deepseek/ds-x", "deepseek/ds-x"])
+    line = "Just Google it, or ask ChatGPT. gemini-x and ds-x."
+    pair = pair_models(google, other)
+    # Alone, Google's song turns "Google" into its own singers (a self-duet: "a singer"),
+    # which the other song wouldn't.
+    assert redact_names(line, google).startswith("Just a singer it")
+    assert redact_names(line, other).startswith("Just Google it")
+    # In a pair, the pair's company names read the same in both songs, and the other song's
+    # exact model name can't single anyone out.
+    assert redact_names(line, google, pair=pair) == \
+        "Just [AI name] it, or ask ChatGPT. a singer and [AI name]."
+    assert redact_names(line, other, pair=pair) == \
+        "Just [AI name] it, or ask ChatGPT. [AI name] and a singer."
+
+
+def test_pair_redaction_keeps_setup_terms_and_unchanged_songs_keep_their_cache_key():
+    from weird_ai_bench.leaderboard import _judge_input_hash
+    plain = make(["deepseek/ds-x", "deepseek/ds-x"])
+    rival = make(["qwen/qw-x", "qwen/qw-x"])
+    # No pair names in the text, so pairing changes nothing the judge sees.
+    assert _judge_input_hash(plain, pair_models(plain, rival)) == _judge_input_hash(plain)
+    google = make(["google/gemini-x", "google/gemini-x"])
+    assert redact_names("Google it", google, keep=("Google",), pair=pair_models(google, plain)) == "Google it"
