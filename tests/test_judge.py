@@ -27,7 +27,7 @@ def prompts(client: ScriptedClient) -> list[str]:
 
 
 def test_version_bumped():
-    assert JUDGE_VERSION == 8
+    assert JUDGE_VERSION == 9
 
 
 def test_redacts_persona_model_and_family_names():
@@ -138,6 +138,18 @@ def test_mix_gives_each_song_its_own_setup():
     assert "The singers are singing to each other" in prompts(c)[0].split("SONG 2 was written")[0]
     assert "The singers are singing to each other" in prompts(c)[1].split("SONG 2 was written")[1]
     assert out["votes"] == ["a", "a"] and out["winner"] == "a"
+
+
+def test_pairwise_prompt_always_defines_the_criteria():
+    """Judges must share what the criteria mean, not only their names."""
+    from weird_ai_bench.judge import CRITERIA
+    a, b = make(), make()
+    c = ScriptedClient(['{"winner": 1}', '{"winner": 2}'])
+    pairwise(a, b, c, "mistralai/mistral-large")
+    for p in prompts(c):
+        assert "Judge using these definitions:" in p
+        for text in (CRITERIA["humor"], CRITERIA["parody_craft"], CRITERIA["singability"]):
+            assert text in p
 
 
 def test_pairwise_record():
@@ -311,6 +323,18 @@ def test_pair_redaction_treats_both_songs_alike():
         "Just [AI name] it, or ask ChatGPT. a singer and [AI name]."
     assert redact_names(line, other, pair=pair) == \
         "Just [AI name] it, or ask ChatGPT. [AI name] and a singer."
+
+
+def test_pair_redaction_keeps_names_the_setup_gives_every_song():
+    """A setup naming one lab reads the same in every song, whoever the pair's writers are."""
+    setup = "Singer 1 is the CEO of Anthropic, the company behind Claude."
+    google = make(["google/gemini-x", "google/gemini-x"])
+    claude = make(["anthropic/claude-x", "anthropic/claude-x"])
+    for r in (google, claude):
+        r["scenario_snapshot"]["text"] = setup
+    pair = pair_models(google, claude)
+    for r in (google, claude):
+        assert "CEO of Anthropic, the company behind Claude" in _context(r, pair)
 
 
 def test_pair_redaction_keeps_setup_terms_and_unchanged_songs_keep_their_cache_key():

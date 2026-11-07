@@ -154,11 +154,19 @@ def test_legacy_run_and_template_grouping():
 
 
 @pytest.mark.parametrize("track", ["freeform", "strict"])
-def test_empty_chorus_does_not_crash(track, tmp_path):
-    r = Song(RunConfig(["a/one", "b/two"], track=track, max_retries=1), ScriptedClient()).run()
-    assert r["parts"]["refrain"]["lines"] == []
+def test_a_reply_with_no_lyrics_fails_the_song_as_the_models(track, tmp_path):
+    """Working with no lyrics (say, reasoning that ran out of tokens) is a model failure."""
+    empty = "Let me count the syllables first. Line 1 has"
+    song = Song(RunConfig(["a/one", "b/two"], track=track, max_retries=1),
+                ScriptedClient([empty, empty]))
+    with pytest.raises(LLMError) as e:
+        song.run()
+    assert e.value.kind == "model" and "no lyrics" in str(e.value)
+    r = song.failed_result(str(e.value), e.value.kind)
+    assert r["failed"]["kind"] == "model" and r["failed"]["section"] == "refrain"
+    assert r["turns"][-1]["attempts"][-1]["response"] == empty  # the reply is kept
+    assert len(r["turns"][-1]["attempts"]) == (2 if track == "strict" else 1)
     assert not r["scores"]["strict_pass"]
-    assert r["verification"]["refrain"]["structure_errors"]
     save(r, tmp_path)
 
 

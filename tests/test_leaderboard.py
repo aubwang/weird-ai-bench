@@ -643,7 +643,67 @@ def test_cli_schedule_file_is_kept_and_grown(tmp_path, monkeypatch, capsys):
     assert main(args + ["--max-pairs", "9"]) == 0
     second = json.loads(schedule.read_text())["pairs"]
     assert second[:3] == first and len(second) == 9
+    judges = json.loads(schedule.read_text())["judges"]
+    assert len(judges) == 9 and all(js == ["j/judge"] for js in judges.values())
     capsys.readouterr()
+
+
+def test_judges_stay_with_their_pairs_when_the_panel_grows(tmp_path, monkeypatch):
+    a_wins(monkeypatch)
+    runs = [fake_run(f"r{i}", [f"m{i}/x"] * 2) for i in range(8)]
+    small = ["a/judge", "c/judge"]
+    first = leaderboard(runs, None, small, tmp_path / "c.jsonl", max_pairs=None, bootstrap=0,
+                        max_judges=1)
+    assert len(first["assignments"]) == 28
+    bigger = leaderboard(runs, None, small + ["d/judge", "e/judge"], tmp_path / "c.jsonl",
+                         max_pairs=None, bootstrap=0, max_judges=1,
+                         keep_judges=first["assignments"])
+    assert bigger["assignments"] == first["assignments"]
+    fresh = leaderboard(runs, None, small + ["d/judge", "e/judge"], tmp_path / "c.jsonl",
+                        max_pairs=None, bootstrap=0, max_judges=1)
+    assert fresh["assignments"] != first["assignments"]  # what keeping them prevents
+
+
+def test_second_judges_cover_every_family_pairing(tmp_path, monkeypatch):
+    a_wins(monkeypatch)
+    fams = ["f1", "f2", "f3", "f4", "f5"]
+    runs = [fake_run(f"r{f}{k}", [f"{f}/m{k}"] * 2) for f in fams for k in range(3)]
+    panel = ["j1/judge", "j2/judge", "j3/judge", "j4/judge"]
+    out = leaderboard(runs, None, panel, tmp_path / "c.jsonl", max_pairs=None, bootstrap=0,
+                      max_judges=1, second_judge_share=0.25)
+    sizes = [len(js) for js in out["assignments"].values()]
+    assert set(sizes) == {1, 2}
+    doubled = {k for k, js in out["assignments"].items() if len(js) == 2}
+    assert abs(len(doubled) - round(0.25 * len(sizes))) <= 1
+    fam = lambda rid: rid[1:3]
+    pairings = {frozenset((fam(a), fam(b))) for a, b in (k.split("|") for k in out["assignments"])}
+    assert pairings == {frozenset((fam(a), fam(b))) for a, b in (k.split("|") for k in doubled)}
+    assert out["judge_pairs"] and sum(jp["pairs"] for jp in out["judge_pairs"]) == len(doubled)
+    assert all(jp["agree"] == 1.0 for jp in out["judge_pairs"])  # every judge picks song a here
+    with pytest.raises(ValueError):
+        leaderboard(runs, None, panel, tmp_path / "c.jsonl", second_judge_share=1.5)
+
+
+def test_sensitivity_and_adjacent_comparisons(tmp_path, monkeypatch):
+    def ladder(a, b, client, judge):  # lower index wins, except judge j2 sees it the other way
+        win = "a" if (a["id"] < b["id"]) != (judge == "j2/judge") else "b"
+        return {"a": a["id"], "b": b["id"], "winner": win, "score_a": float(win == "a"),
+                "votes": [win, win], "judge": judge, "judge_version": JUDGE_VERSION}
+
+    monkeypatch.setattr(lb, "pairwise", ladder)
+    runs = [fake_run(f"r{i}", [f"m{i}/x"] * 2) for i in range(4)]
+    out = leaderboard(runs, None, ["j1/judge", "j2/judge"], tmp_path / "c.jsonl", max_pairs=None,
+                      bootstrap=50, sensitivity=True)
+    names = [v["name"] for v in out["sensitivity"]["variants"]]
+    assert names[0] == "as published" and "prior sd 0.5" in names and "prior sd 2" in names
+    assert "without judge j1/judge" in names and "without judge j2/judge" in names
+    alone = {v["name"]: v for v in out["sensitivity"]["variants"]}
+    assert alone["without judge j2/judge"]["rank"]["m0/x"] == 1
+    assert alone["without judge j1/judge"]["rank"]["m0/x"] == 4
+    assert out["sensitivity"]["rank_range"]["m0/x"] == [1, 4]
+    assert len(out["adjacent"]) == 3
+    assert all(0 <= a["ahead_share"] <= 1 and a["elo_diff_lo"] <= a["elo_diff_hi"] for a in out["adjacent"])
+    assert out["analysis"]["judges"] == ["j1/judge", "j2/judge"]
 
 
 def test_intervals_ignore_draws_that_left_a_model_out(tmp_path, monkeypatch):
@@ -675,6 +735,19 @@ def test_provider_failures_are_left_out_not_forfeited(tmp_path, monkeypatch):
     assert "m9/x" not in models and "m8/x" not in models
     assert "m7/x" in models and out["forfeits"] == 3  # a model failure still loses its pairs
     assert [lb.failure_kind(r) for r in runs] == [None, None, None, "provider", "provider", "model"]
+
+
+def test_a_saved_song_with_an_empty_reply_forfeits(tmp_path, monkeypatch):
+    """Songs saved before empty replies stopped a run still count as the model's failure."""
+    a_wins(monkeypatch)
+    runs = [fake_run(f"r{i}", [f"m{i}/x"] * 2) for i in range(3)]
+    runs[2]["turns"] = [{"singer": 1, "attempts": [{"lines": ["ok"]}]},
+                        {"singer": 2, "attempts": [{"lines": []}]}]
+    assert [lb.failure_kind(r) for r in runs] == [None, None, "model"]
+    out = leaderboard(runs, None, "j/judge", tmp_path / "c.jsonl", max_pairs=None, bootstrap=0)
+    assert out["forfeits"] == 2
+    assert any("no lyrics" in w and "r2" in w for w in out["warnings"])
+    assert out["provider_failures"] == []
 
 
 def test_cached_win_plus_tie_is_rescored_without_judging_again(tmp_path, monkeypatch):

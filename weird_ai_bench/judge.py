@@ -13,7 +13,7 @@ from .orchestrate import render_sheet, result_scenario
 from .spec import describe_internal_rhyme, result_spec, syllable_map
 
 # Bump when prompts or verdict interpretation change; older caches are ignored.
-JUDGE_VERSION = 8
+JUDGE_VERSION = 9
 
 CRITERIA = {
     "singability": "Would the lines fit the original melody when sung? Natural word stress, "
@@ -161,7 +161,7 @@ def _context(result: dict, pair: tuple[str, ...] | None = None) -> str:
     # Names the setup itself gives every singer stay, as they do in the lyric sheet:
     # redacting them only for their own family's songs would garble those setups and
     # reveal who wrote them.
-    kept = (spec.title, spec.artist, *characters, *scenario_terms(result))
+    kept = (spec.title, spec.artist, *characters, *scenario_terms(result, pair))
     setup = redact_names("\n".join(x for x in setup if x.strip()), result, kept, pair)
     setup_note = (f"The singers were given this setup:\n<setup>\n{setup}\n</setup>" if setup
                   else "The singers were given no setup beyond the song itself.")
@@ -261,7 +261,7 @@ def check_notes(result: dict, pair: tuple[str, ...] | None = None) -> str:
             notes.append(f"- {sec.label}: " + "; ".join(found) + ".")
     head = f"Automated checks: {ok} of {total} generated lines are within their syllable targets."
     text = head + ("\n" + "\n".join(notes) if notes else " No other misses.")
-    return redact_names(text, result, (spec.title, spec.artist, *scenario_terms(result)), pair)
+    return redact_names(text, result, (spec.title, spec.artist, *scenario_terms(result, pair)), pair)
 
 
 def _extract_json(text: str) -> dict:
@@ -298,15 +298,16 @@ def _score(value) -> float | None:
     return out if math.isfinite(out) else None
 
 
-def scenario_terms(result: dict) -> tuple[str, ...]:
+def scenario_terms(result: dict, pair: tuple[str, ...] | None = None) -> tuple[str, ...]:
     """Model and family names the setup itself gives every singer, such as a hook built on "GPT".
 
     Every song in the group was told to use them, so they reveal no author, and replacing them
-    in one family's songs only would garble those songs alone.
+    in one family's songs only would garble those songs alone. In a pair, names of the other
+    song's models count too, since pair redaction would otherwise replace them.
     """
     sc = result.get("scenario_snapshot") or {}
     setup = " ".join([sc.get("text") or "", *(sc.get("per_singer") or {}).values()])
-    names = {n for m in result["config"]["models"]
+    names = {n for m in {*result["config"]["models"], *(pair or ())}
              for n in (m, display_name(m), *FAMILY_ALIASES.get(family(m), []))}
     return tuple(n for n in names if re.search(rf"(?<!\w){re.escape(n)}(?!\w)", setup, re.I))
 
@@ -317,16 +318,13 @@ def judge_inputs(result: dict, pair: tuple[str, ...] | None = None) -> list:
     In a pairwise comparison, what the judge sees depends on the other song's models too
     (see redact_names), so pass `pair`: songs whose text doesn't change keep their old key.
     """
-    crit = criteria(result)
-    # Craft pairwise prompts include the definitions, not just their names.
-    # Preserve the old representation for legacy prompts.
-    definitions = crit if crit.get("parody_craft") != CRITERIA["parody_craft"] else list(crit)
-    return [_context(result, pair), _sheet(result, pair), definitions]
+    # Pairwise prompts include the criteria's definitions, not just their names.
+    return [_context(result, pair), _sheet(result, pair), criteria(result)]
 
 
 def _sheet(result: dict, pair: tuple[str, ...] | None = None) -> str:
     sheet = redact_names(render_sheet(result, blind=True, show_scores=False), result,
-                         scenario_terms(result), pair)
+                         scenario_terms(result, pair), pair)
     return f"{sheet}\n\n{check_notes(result, pair)}" if result.get("verification") else sheet
 
 
@@ -391,19 +389,21 @@ def pairwise(a: dict, b: dict, client, judge_model: str) -> dict:
     pair = pair_models(a, b)
     for first, second, flip in ((a, b, False), (b, a, True)):
         ctx1, ctx2 = _context(first, pair), _context(second, pair)
-        ask = f"Which is the better parody overall, weighing {weigh}?\n\n"
+        ask = (f"Which is the better parody overall, weighing {weigh}? Weigh them together "
+               "into one overall verdict; no single criterion decides it.\n\n")
+        # Every judge gets the same definitions, so judges differ in taste, not in what
+        # they think the criteria mean.
         crit1, crit2 = criteria(first), criteria(second)
-        if any(c.get("parody_craft") != CRITERIA["parody_craft"] for c in (crit1, crit2)):
-            shared = [k for k in crit1 if k in crit2]
-            definitions = lambda c: "\n".join(f"- {k}: {c[k]}" for k in shared)
-            if all(crit1[k] == crit2[k] for k in shared):
-                ask += "Judge using these definitions:\n" + definitions(crit1) + "\n\n"
-            else:
-                # --mix may compare writers given different expectations. Keep
-                # each definition attached to its own song in both orientations.
-                ask += ("Each song had its own stated criteria.\n"
-                        "SONG 1 criteria:\n" + definitions(crit1) + "\n\n"
-                        "SONG 2 criteria:\n" + definitions(crit2) + "\n\n")
+        shared = [k for k in crit1 if k in crit2]
+        definitions = lambda c: "\n".join(f"- {k.replace('_', ' ')}: {c[k]}" for k in shared)
+        if all(crit1[k] == crit2[k] for k in shared):
+            ask += "Judge using these definitions:\n" + definitions(crit1) + "\n\n"
+        else:
+            # --mix may compare writers given different expectations. Keep
+            # each definition attached to its own song in both orientations.
+            ask += ("Each song had its own stated criteria.\n"
+                    "SONG 1 criteria:\n" + definitions(crit1) + "\n\n"
+                    "SONG 2 criteria:\n" + definitions(crit2) + "\n\n")
         shared = 0  # characters every pair in this group sends identically, for caching
         if ctx1 == ctx2:
             prompt = f"{ctx1}\n\nHere are two songs written under the same setup. {ask}"

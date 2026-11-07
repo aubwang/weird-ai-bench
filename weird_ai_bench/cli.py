@@ -45,6 +45,7 @@ def _config(args, models=None, scenario=None, track=None) -> RunConfig:
         gates=[g.strip() for g in args.gates.split(",") if g.strip()],
         spec=args.spec,
         temperature=args.temperature, effort=args.effort, seed=args.seed,
+        max_tokens=args.max_tokens,
     )
 
 
@@ -493,16 +494,24 @@ def cmd_leaderboard(args) -> int:
     first = Path(args.paths[0])
     cache = (first if first.is_dir() else first.parent) / "judgments.jsonl"
     judges = args.judge[0] if len(args.judge) == 1 else args.judge
+    if not 0 <= args.second_judge_share <= 1:
+        _log("--second-judge-share must be between 0 and 1")
+        return 2
     schedule = Path(args.schedule) if args.schedule else None
-    keep = ([tuple(p) for p in json.loads(schedule.read_text())["pairs"]]
-            if schedule and schedule.exists() else None)
+    saved = json.loads(schedule.read_text()) if schedule and schedule.exists() else {}
+    keep = [tuple(p) for p in saved["pairs"]] if "pairs" in saved else None
     lb = leaderboard(runs, client, judges, cache, max_pairs=args.max_pairs,
                      seed=args.seed or 0, mix=args.mix, log=_log, bootstrap=args.bootstrap,
                      prior_sd=args.prior_sd, max_judges=args.max_judges_per_pair,
-                     keep_pairs=keep)
+                     keep_pairs=keep, keep_judges=saved.get("judges"),
+                     second_judge_share=args.second_judge_share, sensitivity=args.sensitivity)
     if schedule:
         schedule.parent.mkdir(parents=True, exist_ok=True)
-        schedule.write_text(json.dumps({"pairs": lb["schedule"]}, indent=1) + "\n", encoding="utf-8")
+        # Pairs and their judges both stay fixed, so adding a judge or songs later never
+        # moves a paid verdict to another judge.
+        judged = {**saved.get("judges", {}), **lb.get("assignments", {})}
+        schedule.write_text(json.dumps({"pairs": lb["schedule"], "judges": judged}, indent=1) + "\n",
+                            encoding="utf-8")
     if args.json_out:
         destination = Path(args.json_out)
         destination.parent.mkdir(parents=True, exist_ok=True)
@@ -538,7 +547,21 @@ def cmd_leaderboard(args) -> int:
         print(f"{i:>2}  {r['model']:<44} {r['elo']:>5} {band}{r['games']:>6} {win:>6} "
               f"{adherence:>6} {syllables:>6} {copied:>6}")
     if ci:
-        print("\nIntervals resample songs within each group; overlapping intervals are not a ranking.")
+        print("\nIntervals resample songs within each model's cell and the compared pairs; they hold "
+              "these songs and judges fixed, so treat them as rough. Overlap is not a ranking test:")
+        for a in lb.get("adjacent") or []:
+            print(f"  {a['higher']} stays ahead of {a['lower']} in {a['ahead_share']:.0%} of resamples "
+                  f"(difference {a['elo_diff']:+} Elo, {a['elo_diff_lo']:+} to {a['elo_diff_hi']:+})")
+    if lb.get("judge_pairs"):
+        print("\nJudges on the same pairs:")
+        for jp in lb["judge_pairs"]:
+            print(f"  {' vs '.join(jp['judges'])}: leaned the same way on {jp['agree']:.0%} of "
+                  f"{jp['pairs']} pairs")
+    if lb.get("sensitivity"):
+        print("\nRank range across sensitivity refits (prior, each judge, song, scenario left out, "
+              "flipped verdicts left out):")
+        for m, (best, worst) in lb["sensitivity"]["rank_range"].items():
+            print(f"  {m:<44} {best}-{worst}")
     print("Adher is composite adherence; syll is count-pass (including declared slack); copy is the share of\n"
           "checked lines copied from the original, which can still pass syll.\n"
           "These diagnostics are separate from the judged ranking; JSON includes exact counts, denominators and copying flags.")
@@ -659,11 +682,18 @@ def main(argv=None) -> int:
                    help="judge model id; repeat for a panel, where each pair skips judges "
                         "from its singers' families")
     p.add_argument("--max-pairs", type=int, default=200)
-    p.add_argument("--schedule", help="pair schedule to build on: pairs in this file are kept, new "
-                   "balanced pairs fill up to --max-pairs, and the result is saved back")
+    p.add_argument("--schedule", help="pair schedule to build on: pairs in this file keep their "
+                   "judges, new balanced pairs fill up to --max-pairs, and the result is saved back")
     p.add_argument("--max-judges-per-pair", type=int,
                    help="with a panel, judge each pair with at most this many of its eligible "
                         "judges, picked by a hash of the pair so reruns keep them")
+    p.add_argument("--second-judge-share", type=float, default=0.0,
+                   help="with --max-judges-per-pair, give this share of the pairs one judge more, "
+                        "covering every group and writer-family pairing, to compare judges on the "
+                        "same songs")
+    p.add_argument("--sensitivity", action="store_true",
+                   help="refit with a tighter and looser prior and with each judge, song, scenario, "
+                        "and the order-flipped verdicts left out; reports each model's rank range")
     p.add_argument("--json-out", help="save leaderboard data, including raw judge replies that may quote "
                    "private lyrics; keep this export local")
     p.add_argument("--mix", action="store_true", help="compare across settings, not just within")
