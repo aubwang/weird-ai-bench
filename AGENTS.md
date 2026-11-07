@@ -90,21 +90,32 @@ Tests use `ScriptedClient`, so they don't need the network.
   Google's own song would garble it and hint at its author. It should come from
   a different model family than the singers. The judge also sees the reference
   lyrics, since it rates parody craft, and the automated check results, since a
-  model can't count syllables reliably. The leaderboard judges each pair twice
+  model can't count syllables reliably. Every judge gets each criterion's
+  definition, not only its name, so judges differ in taste rather than in what
+  they think "parody craft" means. Names the setup itself gives every singer
+  stay in every song, whichever families are in the pair. The leaderboard judges each pair twice
   with the order swapped. Opposite wins (a flip) count as a tie; a win and a tie
   count 0.75, since that verdict still leans one way. When every family is also a contestant, use a panel of judges from
   several families: each pair skips the judges from its singers' families.
+  That exclusion ties some family pairings to one judge, so with one judge per
+  pair a share of pairs gets a second judge, covering every family pairing, to
+  measure how much the choice of judge matters. A schedule saves each pair's
+  judges, so a later stage or a bigger panel never moves a paid verdict.
   Meter is reported beside the judged rating, not blended into it. Cached
   judgments are keyed by a hash of what the judge saw, so a rescored run is
   judged again.
 - **The fit is weighted additive Bradley-Terry.** A song's strength is its
   singers' model strengths weighted by each singer's share of the generated
   lines as performed, so a repeated chorus counts for its writer and a
-  self-duet's strength is its model's. It's a MAP fit with a N(0, 1) prior, and
-  the intervals come from resampling runs within each group.
+  self-duet's strength is its model's. It's a MAP fit with a N(0, 1) prior. The
+  intervals resample each model's songs and then the compared pairs; they hold
+  the songs and templates fixed, so they're rough and don't speak for other
+  songs. Claims that one model beats another use the share of resamples where
+  it stays ahead, not overlapping intervals, and `--sensitivity` shows how
+  the ranking moves with the prior, each judge, each song, and each scenario.
 - **Model failures count; provider failures don't.** A song whose model
-  refused, spent every token before answering, or kept replying with nothing is
-  saved with what was written; it scores 0 on the missing parts and forfeits
+  refused, spent every token before answering, or replied with no lyrics (empty,
+  or working that never reached an answer) is saved with what was written; it scores 0 on the missing parts and forfeits
   its leaderboard pairs. When the service fails instead (overload, 5xx, rate
   limits that outlast the retries, network errors, a model that's been pulled),
   the song is saved with `failed.kind: provider`, left out of `stats` and

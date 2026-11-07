@@ -215,7 +215,7 @@ class ScriptedClient:
 
     def complete(self, model: str, messages: list[dict]) -> Completion:
         self.calls.append({"model": model, "messages": [dict(m) for m in messages]})
-        text = self.responses.pop(0) if self.responses else "<lyrics>\n</lyrics>"
+        text = self.responses.pop(0) if self.responses else "<lyrics>\nla la la\n</lyrics>"
         return Completion(text=text, model=model, prompt_tokens=0, completion_tokens=0, cost=0.0)
 
 

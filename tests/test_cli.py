@@ -37,9 +37,10 @@ class FailingClient(ScriptedClient):
 def test_failed_songs_are_saved(monkeypatch, tmp_path, capsys):
     monkeypatch.setattr("weird_ai_bench.cli._client", lambda args: FailingClient())
     assert main(["run", "--model", "a/x", "--model", "b/y", "--track", "freeform",
-                 "--out", str(tmp_path)]) == 1
+                 "--max-tokens", "1234", "--out", str(tmp_path)]) == 1
     (run,) = [json.loads(p.read_text()) for p in tmp_path.glob("*.json")]
     assert "used all tokens" in run["failed"]["error"]
+    assert run["config"]["max_tokens"] == 1234  # a limit that shapes failures is saved
     assert run["scores"]["strict_pass"] is False
     assert main(["stats", str(tmp_path)]) == 0
     assert "failed" in capsys.readouterr().out

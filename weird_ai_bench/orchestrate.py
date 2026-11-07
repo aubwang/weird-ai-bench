@@ -12,7 +12,7 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
-from .llm import display_name
+from .llm import LLMError, display_name
 from .metrics import section_metrics, summarize_metrics
 from .prompts import (
     trade_line_task, chorus_task, label, lyric_block, parse_lyrics, render_song_so_far,
@@ -55,6 +55,7 @@ class RunConfig:
     effort: str | None = None
     seed: int | None = None
     rhythm: str = "none"
+    max_tokens: int | None = None  # the request's token limit; None in runs saved before it was
 
     def validate(self, spec: SongSpec | None = None, scenario: Scenario | None = None) -> None:
         """Check the settings; with a spec and scenario, also check they fit this song."""
@@ -340,6 +341,7 @@ class Song:
                 "passed": passed, "errors": errors, "all_errors": rep.errors(GATES),
                 "model_reported": comp.model, "latency_s": round(comp.latency_s, 2),
                 "tokens": [comp.prompt_tokens, comp.completion_tokens], "cost": comp.cost,
+                "finish_reason": comp.raw_finish,
             })
             self.log(f"  {section}{'' if line_index is None else f' line {line_index + 1}'} "
                      f"({label(cfg, singer)}) attempt {a + 1}: "
@@ -354,6 +356,11 @@ class Song:
             "first_try_pass": attempts[0]["passed"], "final_pass": attempts[-1]["passed"],
             "retries": len(attempts) - 1,
         })
+        if not lines:
+            # A reply with no lyrics is a model failure like an empty one (for example, working
+            # that ran out of tokens before the answer). The turn above keeps the reply.
+            raise LLMError(f"{self.model(singer)}: the reply had no lyrics "
+                           f"(finish_reason={attempts[-1]['finish_reason']})", kind="model")
         return lines
 
     def _hook(self) -> str | None:

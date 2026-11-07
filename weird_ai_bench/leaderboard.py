@@ -43,14 +43,27 @@ _PROVIDER_FAILURE_TEXT = ("HTTP 4", "HTTP 5", "network error", "upstream_status"
 
 
 def failure_kind(run: dict) -> str | None:
-    """None for a finished song, else "provider" or "model" (see llm.LLMError)."""
+    """None for a finished song, else "provider" or "model" (see llm.LLMError).
+
+    A song saved before replies with no lyrics stopped it (some ran out of tokens mid-working)
+    finished with an empty section; it counts as the model's failure too.
+    """
     failed = run.get("failed")
     if not failed:
-        return None
+        return "model" if empty_turn(run) else None
     if failed.get("kind") in ("provider", "model"):
         return failed["kind"]
     error = failed.get("error") or ""
     return "provider" if any(t in error for t in _PROVIDER_FAILURE_TEXT) else "model"
+
+
+def empty_turn(run: dict) -> dict | None:
+    """The first turn whose final reply had no lyrics, if any."""
+    for turn in run.get("turns") or []:
+        attempts = turn.get("attempts") or []
+        if attempts and not attempts[-1].get("lines"):
+            return turn
+    return None
 
 
 def split_provider_failures(runs: list[dict]) -> tuple[list[dict], list[dict]]:
@@ -148,11 +161,11 @@ def gate_stats(runs: list[dict]) -> list[dict]:
             slots[b["model"]].append(s)
         overall = (r.get("judge") or {}).get("scores", {}).get("overall")
         # A failed song's unwritten turns count as turns that didn't pass.
-        expected = expected_turns(r) if "failed" in r else {}
+        expected = expected_turns(r) if failure_kind(r) else {}
         for model, singers in slots.items():
             a = acc[(spec, model, cfg["track"], cfg.get("guidance", "full"), cfg.get("rhythm", "none"))]
             a["songs"] += 1
-            a["failed"] += "failed" in r
+            a["failed"] += failure_kind(r) is not None
             for s in singers:
                 b = r["scores"]["by_singer"][s]
                 if b["adherence"] is not None:
@@ -398,7 +411,9 @@ def leaderboard(runs: list[dict], client, judge_model: str | list[str], cache_pa
                 log=None, bootstrap: int = 200, prior_sd: float = 1.0,
                 pairs: list[tuple[str, str]] | None = None, cached_only: bool = False,
                 max_judges: int | None = None,
-                keep_pairs: list[tuple[str, str]] | None = None) -> dict:
+                keep_pairs: list[tuple[str, str]] | None = None,
+                keep_judges: dict[str, list[str]] | None = None,
+                second_judge_share: float = 0.0, sensitivity: bool = False) -> dict:
     """Rank models from pairwise judgments within groups of identical settings.
 
     `judge_model` is one judge, or a panel. With a panel, each pair is judged by the members that
@@ -410,10 +425,18 @@ def leaderboard(runs: list[dict], client, judge_model: str | list[str], cache_pa
     ones, so adding songs or samples later never drops a paid judgment. The schedule used comes
     back as "schedule". With `cached_only`, nothing is judged: a judgment
     missing from the cache drops that judge from the pair, and a pair left with no judge is skipped.
+
+    `keep_judges` maps pair keys ("id1|id2", sorted) to the judges an earlier stage gave them, so
+    a pair keeps its judges when the panel changes; the judges used come back as "assignments".
+    `second_judge_share` gives that share of the pairs one judge more than `max_judges`, spread
+    over every group and family pairing (see `extra_judge_pairs`), so judges can be compared on
+    the same pairs. `sensitivity` adds refits under other choices (see `sensitivity_checks`).
     """
     log = log or (lambda m: None)
     if max_judges is not None and max_judges < 1:
         raise ValueError("max_judges must be at least 1")
+    if not 0 <= second_judge_share <= 1:
+        raise ValueError("second_judge_share must be between 0 and 1")
     judges = [judge_model] if isinstance(judge_model, str) else list(dict.fromkeys(judge_model))
     cache: dict[tuple, dict] = {}
     if cache_path.exists():
@@ -438,9 +461,13 @@ def leaderboard(runs: list[dict], client, judge_model: str | list[str], cache_pa
     groups: dict[tuple, list[int]] = defaultdict(list)
     for i, r in enumerate(runs):
         groups[("all",) if mix else group_key(r)].append(i)
+    empty = [r["id"] for r in runs if not r.get("failed") and empty_turn(r)]
+    if empty:
+        warnings.append(f"{len(empty)} song(s) finished with a reply that had no lyrics, so they "
+                        "count as model failures and forfeit their pairs: " + ", ".join(empty) + ".")
     weights = [singer_weights(r) for r in runs]
     wkeys = [_wkey(w) for w in weights]
-    failed = ["failed" in r for r in runs]
+    failed = [failure_kind(r) is not None for r in runs]
 
     candidates, same = [], 0
     for idxs in groups.values():
@@ -514,6 +541,11 @@ def leaderboard(runs: list[dict], client, judge_model: str | list[str], cache_pa
     # for only minutes. Judgments are independent, so the order changes nothing else.
     group_order = {i: n for n, idxs in enumerate(groups.values()) for i in idxs}
     pairs = sorted(pairs, key=lambda p: group_order.get(p[0], 0))
+    extra = (extra_judge_pairs([(runs[i], runs[j], group_order.get(i, 0)) for i, j in pairs],
+                               second_judge_share)
+             if max_judges is not None and second_judge_share else set())
+    assignments: dict[str, list[str]] = {}
+    pair_recs = []  # per fitted pair: [(judge, score for a, consistent)]
 
     comparisons, records, pair_idx = [], [], []
     conflicted, shared, agreed, skipped = 0, 0, 0, 0
@@ -538,7 +570,14 @@ def leaderboard(runs: list[dict], client, judge_model: str | list[str], cache_pa
                     if hk not in input_hashes:
                         input_hashes[hk] = _judge_input_hash(runs[idx], hk[1])
                 panel, forced = panel_for(judges, a, b)
-                panel = capped(panel, max_judges, a["id"], b["id"])
+                pkey = pair_key(a["id"], b["id"])
+                kept_panel = [j for j in (keep_judges or {}).get(pkey, []) if j in judges]
+                if kept_panel:
+                    panel = kept_panel
+                else:
+                    k = None if max_judges is None else max_judges + (pkey in extra)
+                    panel = capped(panel, k, a["id"], b["id"])
+                assignments[pkey] = list(panel)
                 conflicted += forced
                 recs = []
                 for judge in panel:
@@ -575,6 +614,7 @@ def leaderboard(runs: list[dict], client, judge_model: str | list[str], cache_pa
                 skipped += 1
                 continue
             ys = [_score(r) if r["a"] == a["id"] else 1 - _score(r) for r in recs]
+            pair_recs.append([(r.get("judge"), y, _consistent(r)) for r, y in zip(recs, ys)])
             if len(ys) > 1:
                 shared += 1
                 agreed += len(set(ys)) == 1
@@ -592,7 +632,8 @@ def leaderboard(runs: list[dict], client, judge_model: str | list[str], cache_pa
                         f"whole panel judged them.")
 
     strengths = fit_additive_bt(comparisons, prior_sd=prior_sd) if comparisons else {}
-    bands = _bootstrap(runs, groups, comparisons, pair_idx, strengths, bootstrap, seed, prior_sd)
+    bands, adjacent = _bootstrap(runs, groups, comparisons, pair_idx, strengths, bootstrap, seed,
+                                 prior_sd, weights)
 
     credit: dict[str, list[float]] = defaultdict(list)
     for wa, wb, y in comparisons:
@@ -641,36 +682,168 @@ def leaderboard(runs: list[dict], client, judge_model: str | list[str], cache_pa
             },
             "flip_rate": (sum(not c for c in judged) / len(judged)) if judged else None,
             "judge_agreement": agreed / shared if shared else None,
+            "judge_pairs": judge_pair_agreement(pair_recs),
+            "assignments": assignments,
+            "adjacent": adjacent,
+            "analysis": {"judges": judges, "max_judges": max_judges,
+                         "second_judge_share": second_judge_share, "prior_sd": prior_sd,
+                         "bootstrap": bootstrap, "seed": seed, "judge_version": JUDGE_VERSION,
+                         "metrics_version": METRICS_VERSION},
+            "sensitivity": (sensitivity_checks(runs, comparisons, pair_idx, pair_recs, prior_sd,
+                                               judges) if sensitivity and comparisons else None),
             "warnings": warnings,
             "forfeits": sum(r.get("judge") == "forfeit" for r in records),
             "provider_failures": [r["id"] for r in dropped]}
 
 
-def _bootstrap(runs, groups, comparisons, pair_idx, strengths, reps, seed, prior_sd):
-    """2.5 and 97.5 percentiles of each model's strength, resampling runs within each group.
+def _bootstrap(runs, groups, comparisons, pair_idx, strengths, reps, seed, prior_sd, weights):
+    """Percentile intervals for each model, and how often each model stays ahead of the next.
 
-    Each model's percentiles come from the draws in which at least one of its songs was compared.
+    Each draw resamples songs within each cell of a group (the songs with the same models, so
+    a model's own repeats stand in for each other; with one song per cell this does nothing),
+    then resamples the compared pairs, which carries the judges' noise. A model's percentiles
+    use the draws in which at least one of its songs was compared. The intervals are rough:
+    they hold the songs and judges fixed and can't speak for other songs.
     """
     if not reps or not comparisons:
-        return {}
+        return {}, []
     rng = random.Random(f"{seed}-bootstrap")
+    cells = [idxs for g in groups.values()
+             for idxs in _cells(g, weights).values()]
     draws: dict[str, list[float]] = defaultdict(list)
+    fits = []
     for _ in range(reps):
         counts: dict[int, int] = defaultdict(int)
-        for idxs in groups.values():
+        for idxs in cells:
             for i in rng.choices(idxs, k=len(idxs)):
                 counts[i] += 1
-        w = [counts[i] * counts[j] for i, j in pair_idx]
+        taken: dict[int, int] = defaultdict(int)
+        for n in rng.choices(range(len(pair_idx)), k=len(pair_idx)):
+            taken[n] += 1
+        w = [counts[i] * counts[j] * taken[n] for n, (i, j) in enumerate(pair_idx)]
         fit = fit_additive_bt(comparisons, w, prior_sd)
         # A model with no compared song in this draw has only the prior's mean, which says
-        # nothing about its strength; with one song per model per group that happens often
-        # enough to pin intervals to the mean. Its interval uses the draws that saw it.
+        # nothing about its strength. Its interval uses the draws that saw it.
         seen = {m for (wa, wb, _), wt in zip(comparisons, w) if wt for m in (*wa, *wb)}
+        fits.append((fit, seen))
         for m in strengths:
             if m in seen and m in fit:
                 draws[m].append(fit[m])
-    return {m: (_percentile(draws[m], 0.025), _percentile(draws[m], 0.975))
-            for m in strengths if draws[m]}
+    bands = {m: (_percentile(draws[m], 0.025), _percentile(draws[m], 0.975))
+             for m in strengths if draws[m]}
+    order = sorted(strengths, key=lambda m: -strengths[m])
+    adjacent = []
+    for hi, lo in zip(order, order[1:]):
+        diffs = [f[hi] - f[lo] for f, seen in fits if hi in seen and lo in seen and hi in f and lo in f]
+        if diffs:
+            elo = lambda d: round(to_elo(d) - 1000)
+            adjacent.append({"higher": hi, "lower": lo, "draws": len(diffs),
+                             "ahead_share": sum(d > 0 for d in diffs) / len(diffs),
+                             "elo_diff": elo(strengths[hi] - strengths[lo]),
+                             "elo_diff_lo": elo(_percentile(diffs, 0.025)),
+                             "elo_diff_hi": elo(_percentile(diffs, 0.975))})
+    return bands, adjacent
+
+
+def _cells(idxs: list[int], weights: list[dict[str, float]]) -> dict[tuple, list[int]]:
+    out: dict[tuple, list[int]] = defaultdict(list)
+    for i in idxs:
+        out[_wkey(weights[i])].append(i)
+    return out
+
+
+def pair_key(a_id: str, b_id: str) -> str:
+    return "|".join(sorted((a_id, b_id)))
+
+
+def _unit_hash(text: str) -> float:
+    return int(hashlib.sha256(text.encode()).hexdigest(), 16) / 2 ** 256
+
+
+def extra_judge_pairs(items: list[tuple[dict, dict, object]], share: float) -> set[str]:
+    """Pair keys to get one judge more: about `share` of the pairs, covering every group and
+    every pairing of writer families at least once, so each judge can be compared with another
+    on the same songs across the board.
+
+    `items` are (song a, song b, group). The pick is by a hash of the pair, so it doesn't look at
+    results; a kept schedule's `keep_judges` holds earlier picks fixed as the schedule grows.
+    """
+    if not share or not items:
+        return set()
+    fams = lambda r: tuple(sorted({family(m) for m in r["config"]["models"]}))
+    ranked = sorted(((_unit_hash("second|" + pair_key(a["id"], b["id"])), pair_key(a["id"], b["id"]),
+                      g, tuple(sorted((fams(a), fams(b))))) for a, b, g in items))
+    chosen, covered = set(), set()
+    for _, key, g, fp in ranked:  # lowest hash in each stratum
+        for stratum in (("group", g), ("families", fp)):
+            if stratum not in covered:
+                covered.add(stratum)
+                chosen.add(key)
+    target = round(share * len(items))
+    for _, key, _, _ in ranked:
+        if len(chosen) >= target:
+            break
+        chosen.add(key)
+    return chosen
+
+
+def judge_pair_agreement(pair_recs: list[list[tuple]]) -> list[dict]:
+    """For each two judges, how often they leaned the same way on the pairs both judged."""
+    acc: dict[tuple, list] = defaultdict(list)
+    side = lambda y: (y > 0.5) - (y < 0.5)
+    for recs in pair_recs:
+        real = sorted((j, y) for j, y, _ in recs if j != "forfeit")
+        for (j1, y1), (j2, y2) in itertools.combinations(real, 2):
+            acc[(j1, j2)].append((side(y1) == side(y2), abs(y1 - y2)))
+    return [{"judges": list(k), "pairs": len(v), "agree": _mean([a for a, _ in v]),
+             "mean_abs_diff": _mean([d for _, d in v])} for k, v in sorted(acc.items())]
+
+
+def sensitivity_checks(runs, comparisons, pair_idx, pair_recs, prior_sd, judges) -> dict:
+    """Refit under other reasonable choices, to show which parts of the ranking depend on them.
+
+    Variants: a tighter and a looser prior; leaving out each judge; leaving out each song and
+    each scenario; and leaving out verdicts that flipped when the order was swapped.
+    """
+    def ranked(comps, sd=prior_sd):
+        fit = fit_additive_bt(comps, prior_sd=sd) if comps else {}
+        order = sorted(fit, key=lambda m: -fit[m])
+        return {"elo": {m: round(to_elo(fit[m])) for m in order},
+                "rank": {m: n for n, m in enumerate(order, 1)}}
+
+    def keep(pred_pair=lambda n: True, pred_rec=lambda j, c: True):
+        out = []
+        for n, ((wa, wb, _), recs) in enumerate(zip(comparisons, pair_recs)):
+            if not pred_pair(n):
+                continue
+            ys = [y for j, y, c in recs if j == "forfeit" or pred_rec(j, c)]
+            if ys:
+                out.append((wa, wb, sum(ys) / len(ys)))
+        return out
+
+    song = lambda r: result_spec(r).title or result_spec(r).id
+    scenario = lambda r: (r.get("scenario_snapshot") or {}).get("id") or "none"
+    variants = [{"name": "as published", **ranked(comparisons)}]
+    for sd in (0.5, 2.0):
+        if sd != prior_sd:
+            variants.append({"name": f"prior sd {sd:g}", **ranked(comparisons, sd)})
+    used = sorted({j for recs in pair_recs for j, _, _ in recs if j != "forfeit"})
+    if len(used) > 1:
+        for judge in used:
+            variants.append({"name": f"without judge {judge}",
+                             **ranked(keep(pred_rec=lambda j, c, judge=judge: j != judge))})
+    for label, of in (("song", song), ("scenario", scenario)):
+        names = sorted({of(runs[i]) for i, _ in pair_idx})
+        if len(names) > 1:
+            for name in names:
+                variants.append({"name": f"without {label} {name}", **ranked(keep(
+                    pred_pair=lambda n, of=of, name=name: of(runs[pair_idx[n][0]]) != name))})
+    variants.append({"name": "without order-flipped verdicts",
+                     **ranked(keep(pred_rec=lambda j, c: c is not False))})
+    models = variants[0]["rank"]
+    rank_range = {m: [min(v["rank"][m] for v in variants if m in v["rank"]),
+                      max(v["rank"][m] for v in variants if m in v["rank"])] for m in models}
+    return {"variants": variants, "rank_range": rank_range}
 
 
 def _judge_input_hash(run: dict, pair: tuple[str, ...] | None = None) -> str:
