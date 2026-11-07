@@ -677,6 +677,23 @@ def test_provider_failures_are_left_out_not_forfeited(tmp_path, monkeypatch):
     assert [lb.failure_kind(r) for r in runs] == [None, None, None, "provider", "provider", "model"]
 
 
+def test_cached_win_plus_tie_is_rescored_without_judging_again(tmp_path, monkeypatch):
+    calls = []
+
+    def old_rule(a, b, client, judge):  # how version-8 records were saved before the 0.75 rule
+        calls.append(1)
+        return {"a": a["id"], "b": b["id"], "winner": "tie", "score_a": 0.5, "votes": ["a", "tie"],
+                "judge": judge, "judge_version": JUDGE_VERSION, "consistent": False}
+
+    monkeypatch.setattr(lb, "pairwise", old_rule)
+    runs = [fake_run("r0", ["a/x", "a/x"]), fake_run("r1", ["b/y", "b/y"])]
+    first = leaderboard(runs, None, "j/judge", tmp_path / "c.jsonl", bootstrap=0)
+    again = leaderboard(runs, None, "j/judge", tmp_path / "c.jsonl", bootstrap=0)
+    assert len(calls) == 1  # the second fit reads the cache
+    for out in (first, again):
+        assert {r["model"]: r["win_rate"] for r in out["table"]} == {"a/x": 0.75, "b/y": 0.25}
+
+
 def test_table_reports_meter_beside_elo(tmp_path, monkeypatch):
     a_wins(monkeypatch)
     runs = [fake_run("r0", ["a/x", "a/x"]), fake_run("r1", ["b/y", "b/y"])]

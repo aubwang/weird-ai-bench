@@ -12,7 +12,7 @@ from collections import defaultdict
 from dataclasses import asdict
 from pathlib import Path
 
-from .judge import JUDGE_VERSION, judge_inputs, pairwise
+from .judge import JUDGE_VERSION, judge_inputs, pair_models, pairwise, score_from_votes
 from .llm import family
 from .metrics import METRICS_VERSION, RATE_METRICS
 from .spec import result_spec
@@ -304,6 +304,14 @@ def _balanced(cands: list[tuple[int, int]], k: int | None, counts: dict[int, int
     return chosen
 
 
+def _score(rec: dict) -> float:
+    """A judgment's score for its song a, from its votes under the current rule when it has them."""
+    votes = rec.get("votes") or []
+    if len(votes) == 2 and all(v in ("a", "b", "tie") for v in votes):
+        return score_from_votes(votes)
+    return rec["score_a"]  # forfeits and records without both votes
+
+
 def _consistent(rec: dict) -> bool | None:
     if rec.get("status") == "unresolved":
         return None
@@ -514,7 +522,7 @@ def leaderboard(runs: list[dict], client, judge_model: str | list[str], cache_pa
     scheduled_by_judge = defaultdict(int)
     unattempted_by_judge = defaultdict(int)
     missing_by_judge = defaultdict(int)
-    input_hashes: dict[int, str] = {}
+    input_hashes: dict[tuple, str] = {}  # (run index, pair models) -> hash of what the judge sees
     with cache_path.open("a") as fh:
         for n, (i, j) in enumerate(pairs, 1):
             a, b = runs[i], runs[j]
@@ -526,15 +534,17 @@ def leaderboard(runs: list[dict], client, judge_model: str | list[str], cache_pa
                          "judge_version": JUDGE_VERSION, "consistent": True}]
             else:
                 for idx in (i, j):
-                    if idx not in input_hashes:
-                        input_hashes[idx] = _judge_input_hash(runs[idx])
+                    hk = (idx, pair_models(a, b))
+                    if hk not in input_hashes:
+                        input_hashes[hk] = _judge_input_hash(runs[idx], hk[1])
                 panel, forced = panel_for(judges, a, b)
                 panel = capped(panel, max_judges, a["id"], b["id"])
                 conflicted += forced
                 recs = []
                 for judge in panel:
                     scheduled_by_judge[judge] += 1
-                    key = _ckey(judge, a["id"], b["id"], input_hashes[i], input_hashes[j])
+                    pm = pair_models(a, b)
+                    key = _ckey(judge, a["id"], b["id"], input_hashes[(i, pm)], input_hashes[(j, pm)])
                     if key in cache and (cached_only or cache[key].get("status") != "unresolved"):
                         rec = cache[key]
                     elif cached_only:
@@ -547,8 +557,8 @@ def leaderboard(runs: list[dict], client, judge_model: str | list[str], cache_pa
                         log(f"  judging pair {n}/{len(pairs)} with {judge}")
                         rec = pairwise(a, b, client, judge)
                         rec.setdefault("judge_version", JUDGE_VERSION)
-                        rec["a_input_sha256"] = input_hashes[i]
-                        rec["b_input_sha256"] = input_hashes[j]
+                        rec["a_input_sha256"] = input_hashes[(i, pm)]
+                        rec["b_input_sha256"] = input_hashes[(j, pm)]
                         fh.write(json.dumps(rec) + "\n")
                         fh.flush()
                         cache[key] = rec
@@ -564,7 +574,7 @@ def leaderboard(runs: list[dict], client, judge_model: str | list[str], cache_pa
             if not recs:
                 skipped += 1
                 continue
-            ys = [r["score_a"] if r["a"] == a["id"] else 1 - r["score_a"] for r in recs]
+            ys = [_score(r) if r["a"] == a["id"] else 1 - _score(r) for r in recs]
             if len(ys) > 1:
                 shared += 1
                 agreed += len(set(ys)) == 1
@@ -663,9 +673,13 @@ def _bootstrap(runs, groups, comparisons, pair_idx, strengths, reps, seed, prior
             for m in strengths if draws[m]}
 
 
-def _judge_input_hash(run: dict) -> str:
-    """A hash of what the judge sees, so rescoring a run or editing a prompt misses the cache."""
-    return hashlib.sha256(json.dumps(judge_inputs(run), ensure_ascii=False).encode()).hexdigest()
+def _judge_input_hash(run: dict, pair: tuple[str, ...] | None = None) -> str:
+    """A hash of what the judge sees, so rescoring a run or editing a prompt misses the cache.
+
+    `pair` is the comparison's models: redaction depends on them, and a song whose text the
+    pair doesn't change hashes the same as before.
+    """
+    return hashlib.sha256(json.dumps(judge_inputs(run, pair), ensure_ascii=False).encode()).hexdigest()
 
 
 def _is_sha256(value) -> bool:
