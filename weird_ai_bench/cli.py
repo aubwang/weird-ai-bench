@@ -383,13 +383,25 @@ PREFLIGHT_PROMPT = ("Write one line of exactly seven syllables about a cat aslee
 
 
 def preflight_one(client, model: str, long: bool) -> dict:
-    """One small call (and optionally a judge-sized one) to check a model before paid runs."""
+    """One small call (and optionally a judge-sized one) to check a model before paid runs.
+
+    `cost` adds up every call made, including the judge-sized one; `missing_cost_calls` counts
+    calls whose cost the provider didn't report. `reasoning_tokens` is None when the provider
+    doesn't report them, which is different from a model that reported zero.
+    """
     row = {"model": model, "ok": False, "reasoning_tokens": None, "latency_s": None,
-           "cost": None, "long_ok": None, "error": None}
+           "cost": None, "missing_cost_calls": 0, "long_ok": None, "error": None}
+
+    def add_cost(comp):
+        if comp.cost is None:
+            row["missing_cost_calls"] += 1
+        else:
+            row["cost"] = (row["cost"] or 0.0) + comp.cost
+
     try:
         comp = client.complete(model, [{"role": "user", "content": PREFLIGHT_PROMPT}])
-        row.update(ok=True, reasoning_tokens=comp.reasoning_tokens,
-                   latency_s=round(comp.latency_s, 1), cost=comp.cost)
+        row.update(ok=True, reasoning_tokens=comp.reasoning_tokens, latency_s=round(comp.latency_s, 1))
+        add_cost(comp)
     except LLMError as exc:
         row["error"] = str(exc)
         return row
@@ -397,7 +409,7 @@ def preflight_one(client, model: str, long: bool) -> dict:
         # About the size of a pairwise judging prompt, to surface size-dependent rate limits.
         filler = "The quick brown fox jumps over the lazy dog. " * 2200
         try:
-            client.complete(model, [{"role": "user", "content": filler + "\nReply with the word ok."}])
+            add_cost(client.complete(model, [{"role": "user", "content": filler + "\nReply with the word ok."}]))
             row["long_ok"] = True
         except LLMError as exc:
             row.update(long_ok=False, error=str(exc))
@@ -411,12 +423,16 @@ def cmd_preflight(args) -> int:
     problems = 0
     print(f"{'model':45} {'call':6} {'reasoning':>9} {'latency':>8} {'cost':>9}" + ("  judge-size" if args.long else ""))
     for r in rows:
-        silent = bool(args.effort) and r["ok"] and not r["reasoning_tokens"]
+        # Only a reported zero means no reasoning; an unreported count can't tell either way.
+        silent = bool(args.effort) and r["ok"] and r["reasoning_tokens"] == 0
+        unreported = bool(args.effort) and r["ok"] and r["reasoning_tokens"] is None
         bad = not r["ok"] or silent or r["long_ok"] is False
         problems += bad
-        cost = f"${r['cost']:.4f}" if r["cost"] is not None else "-"
+        cost = (f"${r['cost']:.4f}" if r["cost"] is not None else "-") + ("+" if r["missing_cost_calls"] else "")
+        reasoning = (r["reasoning_tokens"] if r["reasoning_tokens"] is not None
+                     else "?" if r["ok"] else "-")
         line = (f"{r['model']:45} {'ok' if r['ok'] else 'FAIL':6} "
-                f"{r['reasoning_tokens'] if r['reasoning_tokens'] is not None else '-':>9} "
+                f"{reasoning:>9} "
                 f"{str(r['latency_s']) + 's' if r['latency_s'] is not None else '-':>8} {cost:>9}")
         if args.long:
             line += "  " + {True: "ok", False: "FAIL", None: "-"}[r["long_ok"]]
@@ -424,6 +440,11 @@ def cmd_preflight(args) -> int:
         if silent:
             print(f"    no reasoning tokens at effort {args.effort}: this model may not reason at this "
                   f"setting, so it would be compared at a disadvantage")
+        if unreported:
+            print(f"    the provider didn't report reasoning tokens, so preflight can't confirm this "
+                  f"model reasons at effort {args.effort}")
+        if r["missing_cost_calls"]:
+            print(f"    {r['missing_cost_calls']} call(s) without cost data; the cost shown is a floor")
         if r["error"]:
             print(f"    {r['error'][:300]}")
     if args.json_out:
